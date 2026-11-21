@@ -137,8 +137,9 @@ are dropped (shown as `stale`) rather than shown as current.
 
 The `claude /usage` probe runs with `--no-session-persistence --tools "" --strict-mcp-config`,
 hooks and Remote Control disabled, in an empty directory, so it writes no session
-log and starts no MCP servers. Its text parser follows CodexBar's description of
-the report and **has not yet been checked against a live Pro/Max report**.
+log and starts no MCP servers. Its parser reads the one-line-per-limit format
+(`Current week (all models): 47% used · resets Nov 25, 9am`) taken from Claude
+Code 2.1.330's own formatter; it **has not yet been checked against a live Pro/Max report**.
 The Codex app-server exchange was checked against Codex CLI 0.171.0.
 
 ### Claude direct mode (`--direct`, opt-in)

@@ -7,11 +7,18 @@
 //   --settings {...}           no hooks, no Remote Control for this process only
 //   cwd = a dedicated empty directory (no project CLAUDE.md, no trust prompts)
 //
-// The report is text. Parsing follows CodexBar's description: blocks headed
-// "Current session" / "Current week (...)" with "N% used|left" and a
-// "Resets ..." line; the "What's contributing to your limits usage?" section is
-// ignored. NOT yet checked against a live Pro/Max report: on a login without a
-// subscription (verified) the command prints only session cost lines.
+// The report is text. Non-interactive /usage (read from Claude Code 2.1.330's
+// own formatter) prints, for a subscription login:
+//   You are currently using your subscription to power your Claude Code usage
+//
+//   Current session: 23% used · resets 3pm (Asia/Shanghai)
+//   Current week (all models): 47% used · resets Nov 25, 9am (Asia/Shanghai)
+//   Current week (Sonnet only): 8% used · resets ...
+//
+//   What's contributing to your usage?   ← ignored from here on
+// and only session cost lines for an API-key login (verified). The interactive
+// panel's layout (title line, then "N% used" / "Resets ..." below, as CodexBar
+// describes it) is still accepted.
 import fs from 'node:fs';
 import path from 'node:path';
 import { quota, runCommand, stripAnsi, quotaCacheDir } from './common.js';
@@ -46,7 +53,22 @@ export function parseClaudeUsage(raw) {
     cur = null;
   };
   for (const line of text.split('\n')) {
-    const head = line.match(/^\s*(Current\s+(?:session|week)[^\n]*?)\s*$/i);
+    // `claude -p /usage` (non-interactive, Claude Code 2.1.x) prints one line per limit:
+    //   "Current week (all models): 47% used · resets Nov 25, 9am (Asia/Shanghai)"
+    const one = line.match(/^\s*(Current\s+(?:session|week)(?:\s*\([^)]*\))?)\s*:\s*(\d+(?:\.\d+)?)\s*%\s*(used|left|remaining)?(?:\s*[·•|-]\s*resets?\s+(.+?))?\s*$/i);
+    if (one) {
+      flush();
+      const n = Number(one[2]);
+      windows.push({
+        ...windowFor(one[1]),
+        usedPercent: /left|remaining/i.test(one[3] || '') ? 100 - n : n,
+        resetsAt: null,
+        detail: one[4] ? `resets ${one[4]}` : null,
+      });
+      continue;
+    }
+    // The interactive panel's layout: a title line, then "N% used" and "Resets ..." below it.
+    const head = line.match(/^\s*(Current\s+(?:session|week)[^\n:]*?)\s*$/i);
     if (head) {
       flush();
       cur = { ...windowFor(head[1]), usedPercent: null, resetsAt: null, detail: null };

@@ -173,6 +173,36 @@ test('claude /usage parser: blocks, used/left, resets text, insights ignored', (
   assert.deepEqual(parseClaudeUsage(noPlan), []);
 });
 
+// Exactly what Claude Code 2.1.330's non-interactive /usage formatter builds:
+//   `${title}: ${Math.floor(utilization)}% used${resets ? ` \xB7 resets ${time}` : ""}`
+const USAGE_PRINT = [
+  'You are currently using your subscription to power your Claude Code usage',
+  '',
+  'Current session: 23% used · resets 3pm (Asia/Shanghai)',
+  'Current week (all models): 47% used · resets Nov 25, 9am (Asia/Shanghai)',
+  'Current week (Sonnet only): 8% used · resets Nov 25, 9am (Asia/Shanghai)',
+  'Current week (Opus): 0% used',
+  '',
+  "What's contributing to your usage?",
+  'Approximate · sessions on this machine only · shares overlap',
+  '',
+  'Last 24h · 120 requests · 4 sessions',
+  '  34%  Current week (Bash tool): 90% used',
+].join('\n');
+
+test('claude /usage parser: the one-line-per-limit print format', () => {
+  const w = parseClaudeUsage(USAGE_PRINT);
+  assert.deepEqual(w.map((x) => [x.id, x.label, x.usedPercent, x.detail]), [
+    ['five_hour', '5h', 23, 'resets 3pm (Asia/Shanghai)'],
+    ['seven_day', 'week', 47, 'resets Nov 25, 9am (Asia/Shanghai)'],
+    ['seven_day_sonnet', 'Sonnet week', 8, 'resets Nov 25, 9am (Asia/Shanghai)'],
+    ['seven_day_opus', 'Opus week', 0, null],
+  ]);
+  const q = claudeCliQuota({ env: { XDG_CACHE_HOME: tmp() }, now: NOW, run: () => ({ ok: true, stdout: USAGE_PRINT, stderr: '' }) });
+  assert.equal(q.status, 'ok');
+  assert.equal(q.windows.length, 4);
+});
+
 test('claude /usage probe: hardened command in an isolated directory', () => {
   const env = { XDG_CACHE_HOME: tmp() };
   let call;

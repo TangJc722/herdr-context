@@ -127,7 +127,8 @@ Subscription usage
 
 `claude /usage` 查询使用 `--no-session-persistence --tools "" --strict-mcp-config` 运行，
 同时禁用 hook 和 Remote Control，并在一个空目录里执行，所以不会写入会话记录，也不会启动 MCP 服务器。
-它的文本解析器是按照 CodexBar 对输出格式的描述编写的，**还没有在真实的 Pro/Max 输出上验证过**。
+它的解析器按"每项额度一行"的格式解析（`Current week (all models): 47% used · resets Nov 25, 9am`），
+这个格式取自 Claude Code 2.1.330 自身的输出代码；**还没有在真实的 Pro/Max 输出上验证过**。
 Codex app-server 的通信流程已在 Codex CLI 0.171.0 上验证。
 
 ### Claude 直连模式（`--direct`，需手动开启）
