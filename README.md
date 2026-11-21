@@ -26,21 +26,31 @@ claude · 1dea6540 · ~/work/api (main) · claude-opus-5-5 · v2.1.330
 
 ## Herdr mod
 
-A panel for the [Herdr app](https://herdr.dev/app) (checked against Herdr 0.1.16):
-the focused pane's context (occupancy, trend, makeup, compactions, files) and
-every subscription's usage, refreshed on its own.
+For the [Herdr app](https://herdr.dev/app) (checked against Herdr 0.1.16):
+a **chip in the status bar** (`ctx 62% · codex week 81%`: the focused pane's
+context and the fullest subscription window) that opens and closes a **Context
+panel in the right sidebar**, next to Files and Changes. The panel shows the
+pane's context (occupancy, trend, makeup, compactions, files) and every
+subscription's usage, refreshed on its own.
 
 ```sh
 git clone https://github.com/TangJc722/herdr-context && cd herdr-context
-node bin/install-mod.js                                   # copies the mod + CLI into ~/.config/herdr-app/mods/herdr-context
+node bin/install-mod.js                                   # mod + CLI + the main-context layout
 herdr-app check ~/.config/herdr-app/mods/herdr-context    # Herdr's own check
-herdr-app do pane.split --direction right --mod herdr-context   # open the panel
 ```
 
-Herdr's own `main` layout is read-only and doesn't take new mods by itself, so
-open the panel as a pane (above; it is saved with its tab, or use the command
-palette's split) or add it to a cloned layout like the chip below. Re-run
-`install-mod.js` to update; `node bin/install-mod.js --uninstall` removes it.
+Herdr's shipped layouts are read-only, so the installer writes a separate layout,
+`main-context`: Herdr's `main` (from the Herdr version you have) with the chip
+beside its status bar and Context as a third panel in its right sidebar. It
+switches to it when `herdr-app` is on PATH; otherwise press ctrl-shift-l (or
+`herdr-app do layout.switch --name main-context`). Your other layouts are not
+touched; switch back the same way. The tab bar remembers per space whether
+Context was open, as it does for Files and Changes.
+
+Re-run `install-mod.js` to update (it rebuilds `main-context` from the current
+`main`); `--no-layout` skips the layout; `--uninstall` removes the mod and the
+layout. Without the layout, open the panel as a pane:
+`herdr-app do pane.split --direction right --mod herdr-context`.
 Works on Windows: commands installed by npm as `.cmd` shims (claude, codex,
 quota-axi) are found and started without a shell.
 Set up the statusLine collector too (the installer prints the exact line), or
@@ -51,22 +61,11 @@ How it works:
   Herdr's `exec`: context every 15 s (`--list --json --recent 48`), subscriptions
   every 2 min (`quota --json`; the refresh button adds `--refresh`).
 - The pane ↔ session match is by folder: the newest Claude Code session whose
-  folder is the focused pane's (or contains it / sits inside it). Context is
+  folder is the focused terminal's (or contains it / sits inside it). With the
+  panel itself focused, it describes the tab's last focused terminal. Context is
   Claude Code only for now; other agents' panes say so.
-- During `herdr-app check` the mod draws built-in sample data instead of running
-  the CLI, so the check renders every part of the panel.
-
-Optional status-bar chip (`ctx 62% · codex week 81%`): clone the main layout
-(`herdr-app do layout.clone '{"name":"main","as":"my-main"}'`) and in
-`layouts/my-main.json` turn the `status` block into a row with the chip beside
-Herdr's status bar:
-
-```json
-{ "id": "status", "type": "row", "size": { "px": 28 }, "children": [
-  { "id": "status-main", "type": "block", "content": { "mod": "workspace-status" } },
-  { "id": "status-context", "type": "block", "size": { "px": 260 }, "content": { "mod": "herdr-context", "props": { "view": "chip" } } }
-] }
-```
+- During `herdr-app check` the mod draws built-in sample data (panel and chip)
+  instead of running the CLI, so the check renders every part.
 
 ## Usage
 
@@ -191,6 +190,7 @@ src/claude/statusline.js   statusLine payload save / read / normalize
 src/claude/discover.js     finds session logs
 src/quota/                 subscription usage: claude (statusLine), claude-cli (/usage), claude-direct,
                            codex (logs), codex-rpc (app-server), kiro, quota-axi, index (source order)
+src/herdr-layout.js        builds the main-context layout from Herdr's main
 src/render.js              text output
 bin/                       CLI, statusLine collector, install-mod.js (Herdr mod installer)
 mod/herdr-context/         the Herdr mod: main.js (drawing), logic.js (pure, tested), sample.js (check data)
@@ -206,7 +206,7 @@ test/                      node --test, synthetic fixtures; a fake codex app-ser
 1. **Codex adapter**: `~/.codex/sessions/**` rollout events: `token_count`
    (`info.last_token_usage`, `model_context_window`, `rate_limits.primary/secondary`)
    and `context_compacted`. Needs a real sample to confirm.
-2. **Herdr mod**: panel + status-bar chip done (match by folder). Next: try it in a live window,
+2. **Herdr mod**: status-bar chip + Context panel in the right sidebar (main-context layout). Next: try it in a live window,
    Codex context in the panel, an incremental reader so polling never re-parses whole logs.
 3. **Quota**: done (Claude statusLine / `/usage` / direct, Codex logs / app-server, Kiro, quota-axi).
    Next: verify Claude `/usage` text and Kiro against live reports; Cursor without quota-axi.

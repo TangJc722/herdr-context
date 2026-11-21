@@ -155,6 +155,34 @@ export function errorLine(output) {
   );
 }
 
+export function findNode(node, id) {
+  if (!node || typeof node !== "object") return null;
+  if (node.id === id) return node;
+  for (const c of node.children ?? []) {
+    const f = findNode(c, id);
+    if (f) return f;
+  }
+  return null;
+}
+
+/** Where the Context panel stands in the shown layout (the main-context one has it
+ *  in the right sidebar's "panel-body" stack, next to Files and Changes). */
+export function panelState(layoutTree) {
+  const block = findNode(layoutTree, "context");
+  const panel = findNode(layoutTree, "panel");
+  const body = findNode(layoutTree, "panel-body");
+  const inSidebar = Boolean(block && panel && body);
+  return { inSidebar, open: inSidebar && !panel.hidden && body.active === "context" };
+}
+
+/** The layout commands that open or close the Context panel. */
+export function toggleCommands(state) {
+  if (!state.inSidebar) return [];
+  return state.open
+    ? [["layout.hide", { id: "panel" }]]
+    : [["layout.select", { stack: "panel-body", child: "context" }], ["layout.show", { id: "panel" }]];
+}
+
 /** Last path segment, for compact file lists. */
 export function baseName(p) {
   const s = String(p ?? "").replace(/\\/g, "/");

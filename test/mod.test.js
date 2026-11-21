@@ -89,7 +89,7 @@ test('worstWindow / chipText / makeup', () => {
 
 // ---------- installer ----------
 function install(appHome) {
-  return spawnSync(process.execPath, [path.join(ROOT, 'bin', 'install-mod.js')], { env: { ...process.env, HERDR_APP_HOME: appHome }, encoding: 'utf8' });
+  return spawnSync(process.execPath, [path.join(ROOT, 'bin', 'install-mod.js')], { env: { ...process.env, HERDR_APP_HOME: appHome, HERDR_CONTEXT_NO_SWITCH: '1' }, encoding: 'utf8' });
 }
 
 test('installer: copies mod + CLI, writes config, bundled CLI runs; uninstall', () => {
@@ -106,7 +106,7 @@ test('installer: copies mod + CLI, writes config, bundled CLI runs; uninstall', 
   assert.match(execFileSync(cfg.node, [cfg.cli, '--help'], { encoding: 'utf8' }), /herdr-context quota/);
   assert.match(r.stdout, /herdr-app check/);
   assert.equal(install(appHome).status, 0, 'reinstall over an existing copy');
-  const u = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'install-mod.js'), '--uninstall'], { env: { ...process.env, HERDR_APP_HOME: appHome }, encoding: 'utf8' });
+  const u = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'install-mod.js'), '--uninstall'], { env: { ...process.env, HERDR_APP_HOME: appHome, HERDR_CONTEXT_NO_SWITCH: '1' }, encoding: 'utf8' });
   assert.equal(u.status, 0);
   assert.ok(!fs.existsSync(dest));
   const missing = install(path.join(appHome, 'nope'));
@@ -147,6 +147,10 @@ const STUBS = {
     export const props = () => S().props;
     export const checking = () => S().checking;
     export const appHome = () => S().appHome;
+    export const layout = () => S().layout;
+    export const run = (cmd, args) => { S().runCalls.push([cmd, args]); return null; };
+    export const shared = (k) => S().shared[k];
+    export const setShared = (k, v) => { S().shared[k] = v; };
     export const readTextFile = async (p) => { try { return (await import('node:fs')).readFileSync(p, 'utf8'); } catch { return null; } };
     export const exec = async (cmd, args, opts) => {
       S().execCalls.push([cmd, ...args]);
@@ -201,6 +205,9 @@ test('mod main.js: fetches through the bundled CLI and draws panel and chip', as
     focused: { space: 's1', tab: 't1', pane: 'p1', terminal: 'tm1', cwd: '/p' },
     panes: [{ pane: 'p1', terminal: 'tm1', tab: 't1', focused: true, cwd: '/p', app: 'claude-code' }],
     execCalls: [],
+    runCalls: [],
+    shared: {},
+    layout: { id: 'root', type: 'row', children: [] }, // Herdr's main: no Context panel
     // keep the CLI away from the real machine: no real claude/codex/kiro, temp caches
     env: { CLAUDE_CONFIG_DIR: path.dirname(projects), XDG_CACHE_HOME: cache, CODEX_HOME: tmp(), PATH: path.dirname(process.execPath) },
   };
@@ -223,7 +230,7 @@ test('mod main.js: fetches through the bundled CLI and draws panel and chip', as
   assert.equal(globalThis.__herdr.execCalls.length, 0);
   // ...but it draws the built-in sample, so the check renders every part
   const preview = texts(idle.render());
-  for (const want of ['claude-sample · main', '61%', 'MAKEUP', 'src/app.js', 'kiro', 'quota-axi not installed']) {
+  for (const want of ['claude-sample · main', '61%', 'MAKEUP', 'src/app.js', 'kiro', 'quota-axi not installed', 'ctx 61% · codex week 93%']) {
     assert.ok(preview.some((s) => s.includes(want)), `preview shows ${want}`);
   }
 
@@ -274,6 +281,35 @@ test('mod main.js: fetches through the bundled CLI and draws panel and chip', as
   findClick(m.render())(null, cx);
   await cx.settle();
   assert.ok(globalThis.__herdr.execCalls.some((c) => c.includes('--refresh')));
+
+  // main-context layout: Context lives in the right sidebar; the chip opens/closes it
+  const sidebarLayout = JSON.parse(fs.readFileSync(path.join(ROOT, 'test', 'fixtures', 'herdr', 'main.json'), 'utf8'));
+  const { withContext } = await import(pathToFileURL(path.join(ROOT, 'src', 'herdr-layout.js')).href);
+  globalThis.__herdr.layout = withContext(sidebarLayout);
+  globalThis.__herdr.shared = {};
+  const sb = new Mod();
+  const cxs = fakeCx();
+  sb.init({}, cxs);
+  await cxs.settle();
+  assert.deepEqual(globalThis.__herdr.shared['workspace.panels'], ['files', 'changes', 'context'], 'registered with the tab bar');
+  globalThis.__herdr.props = { view: 'chip' };
+  const chipClick = (n) => (n.ids.includes('hc-chip') ? n.clickFn : n.kids.map(chipClick).find(Boolean));
+  globalThis.__herdr.runCalls = [];
+  chipClick(sb.render())();
+  assert.deepEqual(globalThis.__herdr.runCalls, [['layout.select', { stack: 'panel-body', child: 'context' }], ['layout.show', { id: 'panel' }]]);
+  // open: the chip hides it, and the panel has a close button doing the same
+  const findN = (l, id) => (l.id === id ? l : (l.children ?? []).map((c) => findN(c, id)).find(Boolean));
+  findN(globalThis.__herdr.layout, 'panel').hidden = false;
+  findN(globalThis.__herdr.layout, 'panel-body').active = 'context';
+  globalThis.__herdr.runCalls = [];
+  chipClick(sb.render())();
+  assert.deepEqual(globalThis.__herdr.runCalls, [['layout.hide', { id: 'panel' }]]);
+  globalThis.__herdr.props = {};
+  const closeClick = (n) => (n.ids.includes('hc-close') ? n.clickFn : n.kids.map(closeClick).find(Boolean));
+  globalThis.__herdr.runCalls = [];
+  closeClick(sb.render())();
+  assert.deepEqual(globalThis.__herdr.runCalls, [['layout.hide', { id: 'panel' }]]);
+  globalThis.__herdr.layout = { id: 'root', type: 'row', children: [] };
 
   // missing config: a readable error, no crash
   fs.rmSync(path.join(appHome, 'mods', 'herdr-context', 'config.json'));

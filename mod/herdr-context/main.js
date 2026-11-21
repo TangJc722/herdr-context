@@ -5,8 +5,8 @@
 // props: { view: "chip" } draws a one-line status-bar chip instead of the panel.
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { exec, appHome, readTextFile, theme, focused, panes, props, checking } from "herdr";
-import { choosePane, pickSession, fmt, pctText, sparkline, resetsIn, ago, level, worstWindow, makeup, chipText, baseName, errorLine } from "./logic.js";
+import { exec, appHome, readTextFile, theme, focused, panes, props, checking, layout, run, shared, setShared } from "herdr";
+import { choosePane, pickSession, fmt, pctText, sparkline, resetsIn, ago, level, worstWindow, makeup, chipText, baseName, errorLine, panelState, toggleCommands } from "./logic.js";
 import { SAMPLE_SESSIONS, SAMPLE_QUOTA } from "./sample.js";
 
 const CONTEXT_EVERY_MS = 15_000;
@@ -33,6 +33,12 @@ export default class HerdrContext extends View {
       this.quota = SAMPLE_QUOTA;
       this.at = this.quotaAt = Date.now();
       return;
+    }
+    // The tab bar remembers the right sidebar's panel per space, but only for
+    // panels listed in "workspace.panels"; list ours so it's remembered too.
+    if (panelState(layout()).inSidebar) {
+      const enabled = shared("workspace.panels") ?? ["files", "changes"];
+      if (Array.isArray(enabled) && !enabled.includes("context")) setShared("workspace.panels", [...enabled, "context"]);
     }
     this.refreshContext(cx);
     this.refreshQuota(cx, false);
@@ -119,16 +125,25 @@ export default class HerdrContext extends View {
     return div().text_color(t.dim).child(text);
   }
 
+  toggle() {
+    for (const [cmd, args] of toggleCommands(panelState(layout()))) run(cmd, args);
+  }
+
+  iconButton(t, id, label, tip, onClick) {
+    return div().id(id).px(6).py(2).rounded(4).cursor_pointer().text_color(t.muted)
+      .hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .tooltip(tip).on_click(onClick).child(label);
+  }
+
   header(t) {
     const busy = this.loading || this.quotaLoading;
-    return h_flex().gap(8).items_center()
+    const inSidebar = panelState(layout()).open;
+    return h_flex().gap(4).items_center()
       .child(div().flex_1().font_semibold().text_color(t.foreground).child("Context"))
-      .child(div().text_size(11).text_color(t.dim).child(busy ? "updating…" : `updated ${ago(this.at)}`))
-      .child(div().id("hc-refresh").px(6).py(2).rounded(4).cursor_pointer().text_color(t.muted)
-        .hover((s) => s.bg(t.hover).text_color(t.foreground))
-        .tooltip("Refresh now (also re-asks every subscription)")
-        .on_click((_e, cx) => { this.refreshContext(cx); this.refreshQuota(cx, true); })
-        .child("↻"));
+      .child(div().text_size(11).text_color(t.dim).pr(4).child(busy ? "updating…" : `updated ${ago(this.at)}`))
+      .child(this.iconButton(t, "hc-refresh", "↻", "Refresh now (also re-asks every subscription)",
+        (_e, cx) => { this.refreshContext(cx); this.refreshQuota(cx, true); }))
+      .when(inSidebar, (el) => el.child(this.iconButton(t, "hc-close", "×", "Close (or click the chip in the status bar)", () => this.toggle())));
   }
 
   contextSection(t) {
@@ -231,9 +246,17 @@ export default class HerdrContext extends View {
     const { session } = this.current();
     const w = worstWindow(this.quota);
     const color = w ? this.color(t, w.window.usedPercent) : t.muted;
-    return h_flex().id("hc-chip").size_full().px(10).items_center().bg(t.chrome).text_size(11.8)
-      .tooltip(this.error ?? this.quotaError ?? "herdr-context: context of the focused pane · fullest subscription window")
-      .child(div().text_color(color).child(chipText(session, this.quota)));
+    const state = panelState(layout());
+    const tip = this.error ?? this.quotaError ??
+      (state.inSidebar ? `${state.open ? "Hide" : "Show"} context details` : "Context of the focused pane · fullest subscription window");
+    return h_flex().size_full().px(8).items_center().justify_end().bg(t.chrome).border_t(1).border_color(t.border).text_size(11.8)
+      .child(h_flex().id("hc-chip").px(8).h(20).gap(6).items_center().rounded(4).cursor_pointer()
+        .when(state.open, (el) => el.bg(t.selected))
+        .hover((s) => s.bg(t.hover))
+        .tooltip(tip)
+        .on_click(() => this.toggle())
+        .child(div().text_color(color).child(chipText(session, this.quota)))
+        .when(state.inSidebar, (el) => el.child(div().text_color(t.dim).child(state.open ? "▸" : "◂"))));
   }
 
   render() {
@@ -244,6 +267,8 @@ export default class HerdrContext extends View {
       .child(this.header(t))
       .child(this.contextSection(t))
       .child(div().h(1).bg(t.border))
-      .child(this.quotaSection(t));
+      .child(this.quotaSection(t))
+      // `herdr-app check` renders the default view only: draw the chip too so it gets checked
+      .when(this.preview, (el) => el.child(div().h(28).child(this.renderChip(t))));
   }
 }

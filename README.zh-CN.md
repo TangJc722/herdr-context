@@ -27,39 +27,36 @@ claude · 1dea6540 · ~/work/api (main) · claude-opus-5-5 · v2.1.330
 
 ## Herdr mod
 
-一个给 [Herdr 桌面版](https://herdr.dev/app) 用的侧边面板（已在 Herdr 0.1.16 上检查通过）：
-显示当前窗格的上下文（占用、趋势、组成、压缩事件、文件），以及每个订阅的用量，会自动刷新。
+给 [Herdr 桌面版](https://herdr.dev/app) 用（已在 Herdr 0.1.16 上检查通过）：
+**状态栏上的小标签**（`ctx 62% · codex week 81%`：当前窗格的上下文占用，以及用量最高的订阅窗口），
+点击它可以打开或收起**右侧边栏里的 Context 面板**，和 Files、Changes 放在一起。
+面板显示当前窗格的上下文（占用、趋势、组成、压缩事件、文件）以及每个订阅的用量，会自动刷新。
 
 ```sh
 git clone https://github.com/TangJc722/herdr-context && cd herdr-context
-node bin/install-mod.js                                   # 把 mod 和命令行工具复制到 ~/.config/herdr-app/mods/herdr-context
+node bin/install-mod.js                                   # 安装 mod、命令行工具和 main-context 布局
 herdr-app check ~/.config/herdr-app/mods/herdr-context    # Herdr 官方检查
-herdr-app do pane.split --direction right --mod herdr-context   # 打开面板
 ```
 
-Herdr 自带的 `main` 布局是只读的，不会自动加入新的 mod，所以需要把面板作为窗格打开
-（用上面的命令，它会随标签页一起保存；也可以用命令面板里的拆分功能），或者像下面的状态栏小标签那样加到复制出来的布局里。
-更新时重新运行 `install-mod.js` 即可；`node bin/install-mod.js --uninstall` 可以卸载。
+Herdr 自带的布局是只读的，所以安装脚本会另外生成一个布局 `main-context`：
+以你当前 Herdr 版本的 `main` 布局为基础，在状态栏旁边加上小标签，在右侧边栏加入第三个面板 Context。
+如果 `herdr-app` 在 PATH 里，安装脚本会自动切换过去；否则按 ctrl-shift-l
+（或运行 `herdr-app do layout.switch --name main-context`）切换。你的其他布局不会被改动，用同样的方法可以切回去。
+和 Files、Changes 一样，标签栏会按工作区记住 Context 面板是否打开。
+
+更新时重新运行 `install-mod.js`（会根据当前的 `main` 重新生成 `main-context`）；
+`--no-layout` 不生成布局；`--uninstall` 会删除 mod 和这个布局。
+不使用这个布局时，可以把面板作为窗格打开：
+`herdr-app do pane.split --direction right --mod herdr-context`。
 支持 Windows：npm 以 `.cmd` 包装文件形式安装的命令（claude、codex、quota-axi）也能被找到，并且不经过 shell 直接启动。
 同时建议配置 statusLine 采集器（安装脚本会打印出完整的配置行），否则面板只显示 token 数量，不显示百分比。
 
 工作原理：
 - mod 不能使用 Node，所以它只负责显示。数据通过 Herdr 的 `exec` 运行打包在一起的命令行工具获取：
   上下文每 15 秒刷新一次（`--list --json --recent 48`），订阅用量每 2 分钟刷新一次（`quota --json`；点刷新按钮时会加上 `--refresh`）。
-- 窗格和会话按文件夹匹配：取工作目录与当前窗格相同（或包含它、或在它里面）的最新一个 Claude Code 会话。
-  上下文目前只支持 Claude Code，其他 agent 的窗格会显示说明。
-- 运行 `herdr-app check` 时，mod 不会运行命令行工具，而是显示内置的示例数据，这样检查能覆盖面板的每个部分。
-
-可选的状态栏小标签（`ctx 62% · codex week 81%`）：先复制一份主布局
-（`herdr-app do layout.clone '{"name":"main","as":"my-main"}'`），然后在
-`layouts/my-main.json` 里把 `status` 区块改成一行，让小标签显示在 Herdr 自带状态栏的旁边：
-
-```json
-{ "id": "status", "type": "row", "size": { "px": 28 }, "children": [
-  { "id": "status-main", "type": "block", "content": { "mod": "workspace-status" } },
-  { "id": "status-context", "type": "block", "size": { "px": 260 }, "content": { "mod": "herdr-context", "props": { "view": "chip" } } }
-] }
-```
+- 窗格和会话按文件夹匹配：取工作目录与当前终端相同（或包含它、或在它里面）的最新一个 Claude Code 会话。
+  焦点在面板本身时，显示这个标签页里最近聚焦过的终端。上下文目前只支持 Claude Code，其他 agent 的窗格会显示说明。
+- 运行 `herdr-app check` 时，mod 不会运行命令行工具，而是显示内置的示例数据（面板和小标签都会显示），这样检查能覆盖每个部分。
 
 ## 使用方法
 
@@ -178,6 +175,7 @@ src/claude/statusline.js   statusLine 数据的保存、读取和规范化
 src/claude/discover.js     查找会话日志
 src/quota/                 订阅用量：claude（statusLine）、claude-cli（/usage）、claude-direct、
                            codex（日志）、codex-rpc（app-server）、kiro、quota-axi、index（数据源顺序）
+src/herdr-layout.js        根据 Herdr 的 main 布局生成 main-context 布局
 src/render.js              文本输出
 bin/                       命令行工具、statusLine 采集器、install-mod.js（Herdr mod 安装脚本）
 mod/herdr-context/         Herdr mod：main.js（界面）、logic.js（纯逻辑，有测试）、sample.js（检查用的示例数据）
@@ -193,7 +191,7 @@ test/                      node --test 测试，使用合成的样本数据和�
 1. **Codex 上下文分析**：读取 `~/.codex/sessions/**` 里的事件：`token_count`
    （`info.last_token_usage`、`model_context_window`、`rate_limits.primary/secondary`）
    和 `context_compacted`。需要一份真实样本来确认。
-2. **Herdr mod**：侧边面板和状态栏小标签已完成（按文件夹匹配）。下一步：在真实窗口里试用；
+2. **Herdr mod**：状态栏小标签 + 右侧边栏的 Context 面板（main-context 布局）。下一步：在真实窗口里试用；
    面板支持 Codex 上下文；增量读取日志，避免每次轮询都重新解析整个日志。
 3. **订阅用量**：已完成（Claude 的 statusLine / `/usage` / 直连模式，Codex 的日志 / app-server，Kiro，quota-axi）。
    下一步：用真实输出验证 Claude `/usage` 文本和 Kiro；不依赖 quota-axi 支持 Cursor。
