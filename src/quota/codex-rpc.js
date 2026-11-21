@@ -13,7 +13,7 @@
 // RateLimitSnapshot: {limitId, limitName, primary, secondary, credits, planType}
 // RateLimitWindow:   {usedPercent, windowDurationMins, resetsAt (epoch s)}
 import { spawn } from 'node:child_process';
-import { quota, toIso, windowLabel, isExpired } from './common.js';
+import { quota, toIso, windowLabel, isExpired, commandLine } from './common.js';
 
 const VERSION = '0.1.0';
 
@@ -46,7 +46,8 @@ export function readCodexRateLimits({ bin = process.env.HERDR_CONTEXT_CODEX_BIN 
     const timer = setTimeout(() => finish({ error: 'codex app-server did not answer in time', timedOut: true }), timeoutMs);
 
     try {
-      child = spawnFn(bin, ['-s', 'read-only', '-a', 'never', 'app-server'], { stdio: ['pipe', 'pipe', 'pipe'], env });
+      const c = commandLine(bin, ['-s', 'read-only', '-a', 'never', 'app-server'], { env });
+      child = spawnFn(c.file, c.args, { stdio: ['pipe', 'pipe', 'pipe'], env, windowsVerbatimArguments: c.windowsVerbatimArguments });
     } catch (e) {
       return finish({ error: e.message, notFound: e.code === 'ENOENT' });
     }

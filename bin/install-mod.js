@@ -49,7 +49,9 @@ console.log(`installed herdr-context ${pkg.version} → ${dest}
 
 Next:
   1. Check it:   herdr-app check "${dest}"
-  2. Herdr docks the panel on the right the first time it sees the mod.
+  2. Open the panel (Herdr's own "main" layout doesn't take new mods by itself;
+     the pane is saved with its tab):
+                 herdr-app do pane.split --direction right --mod herdr-context
   3. Recommended, for context % and Claude limits, in ~/.claude/settings.json:
      "statusLine": { "type": "command", "command": "\\"${process.execPath.replace(/\\/g, '\\\\')}\\" \\"${collector.replace(/\\/g, '\\\\')}\\"" }
   Optional status-bar chip: add a block { "content": { "mod": "herdr-context", "props": { "view": "chip" } } }

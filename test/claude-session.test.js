@@ -90,6 +90,18 @@ test('compaction: boundary recorded, post-compaction size filled, segment reset'
   assert.ok(cats.includes('systemAndTools'));
 });
 
+test('prompt_snapshot with a system prompt but no tool list: no crash, no split', () => {
+  // seen on a real Windows machine: snapshot carries systemPrompt only
+  const { snap } = load('sysprompt-only.jsonl');
+  const c = snap.composition;
+  assert.equal(c.total, 2002);
+  assert.equal(sum(c.parts), 2002);
+  const cats = c.parts.map((p) => p.category);
+  assert.ok(cats.includes('systemAndTools'), cats.join());
+  assert.ok(!cats.includes('systemPrompt') && !cats.includes('toolDefinitions'));
+  assert.equal(c.topTools, null);
+});
+
 test('empty session has no composition', () => {
   const s = new ClaudeSession();
   assert.equal(s.snapshot().composition, null);

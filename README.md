@@ -34,10 +34,15 @@ every subscription's usage, refreshed on its own.
 git clone https://github.com/TangJc722/herdr-context && cd herdr-context
 node bin/install-mod.js                                   # copies the mod + CLI into ~/.config/herdr-app/mods/herdr-context
 herdr-app check ~/.config/herdr-app/mods/herdr-context    # Herdr's own check
+herdr-app do pane.split --direction right --mod herdr-context   # open the panel
 ```
 
-Herdr docks the panel on the right the first time it sees the mod. Re-run
+Herdr's own `main` layout is read-only and doesn't take new mods by itself, so
+open the panel as a pane (above; it is saved with its tab, or use the command
+palette's split) or add it to a cloned layout like the chip below. Re-run
 `install-mod.js` to update; `node bin/install-mod.js --uninstall` removes it.
+Works on Windows: commands installed by npm as `.cmd` shims (claude, codex,
+quota-axi) are found and started without a shell.
 Set up the statusLine collector too (the installer prints the exact line), or
 the panel shows token counts without a percentage.
 

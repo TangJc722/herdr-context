@@ -71,12 +71,75 @@ export function isExpired(w, now = Date.now()) {
   return w.resetsAt != null && Date.parse(w.resetsAt) <= now;
 }
 
+// ---------- starting programs on Windows ----------
+// Node starts .exe files by name, but npm installs CLIs (claude, codex,
+// quota-axi) as .cmd shims, which Node can only start through a shell; by
+// name alone they look "not installed". So on Windows we search PATH with
+// PATHEXT ourselves: .exe/.com run directly; an npm shim runs its JavaScript
+// entry with this Node (no shell, no quoting); any other .cmd/.bat goes
+// through cmd.exe with cross-spawn-style escaping.
+
+const isFile = (p) => {
+  try {
+    return fs.statSync(p).isFile();
+  } catch {
+    return false;
+  }
+};
+
+/** The script an npm .cmd shim runs, e.g. `"%dp0%\node_modules\@openai\codex\bin\codex.js" %*`. */
+export function npmShimTarget(shimPath, readFile = (p) => fs.readFileSync(p, 'utf8')) {
+  let text;
+  try {
+    text = readFile(shimPath);
+  } catch {
+    return null;
+  }
+  const m = String(text).match(/"%~?dp0%?\\?([^"%]+?\.(?:js|cjs|mjs))"/i);
+  return m ? path.win32.join(path.win32.dirname(shimPath), m[1]) : null;
+}
+
+function escapeCmdArg(arg, double) {
+  let s = String(arg).replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, '$1$1');
+  s = `"${s}"`;
+  s = s.replace(/([()\][%!^"`<>&|;, *?])/g, '^$1');
+  return double ? s.replace(/([()\][%!^"`<>&|;, *?])/g, '^$1') : s;
+}
+
+/**
+ * How to start `cmd args` here: {file, args, windowsVerbatimArguments?}.
+ * Options are injectable so the Windows logic is testable anywhere.
+ */
+export function commandLine(cmd, args = [], { platform = process.platform, env = process.env, exists = isFile, readFile, node = process.execPath } = {}) {
+  if (platform !== 'win32') return { file: cmd, args };
+  const w = path.win32;
+  const exts = (env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean).map((e) => e.toLowerCase());
+  const dirs = /[\\/]/.test(cmd) ? [''] : (env.PATH ?? env.Path ?? '').split(';').filter(Boolean);
+  const names = w.extname(cmd) ? [cmd] : exts.map((e) => cmd + e);
+  for (const d of dirs) {
+    for (const n of names) {
+      const full = d ? w.join(d, n) : n;
+      if (!exists(full)) continue;
+      const ext = w.extname(full).toLowerCase();
+      if (ext === '.cmd' || ext === '.bat') {
+        const js = npmShimTarget(full, readFile);
+        if (js && exists(js)) return { file: node, args: [js, ...args] };
+        const line = [escapeCmdArg(full, false), ...args.map((a) => escapeCmdArg(a, true))].join(' ');
+        return { file: env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', `"${line}"`], windowsVerbatimArguments: true };
+      }
+      return { file: full, args };
+    }
+  }
+  return { file: cmd, args }; // not found: let spawn report ENOENT
+}
+
 /**
  * Runs a command without a shell. Returns {ok, stdout, stderr, notFound, timedOut}.
  * Injected into providers so tests can fake it.
  */
 export function runCommand(cmd, args, { timeoutMs = 20000, env = process.env, cwd } = {}) {
-  const r = spawnSync(cmd, args, { encoding: 'utf8', timeout: timeoutMs, env, cwd, maxBuffer: 16 * 1024 * 1024 });
+  const c = commandLine(cmd, args, { env });
+  const r = spawnSync(c.file, c.args, { encoding: 'utf8', timeout: timeoutMs, env, cwd, maxBuffer: 16 * 1024 * 1024, windowsVerbatimArguments: c.windowsVerbatimArguments });
   return {
     ok: !r.error && r.status === 0,
     stdout: r.stdout || '',

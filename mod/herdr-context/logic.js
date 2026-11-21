@@ -120,6 +120,19 @@ export function chipText(session, quota) {
   return parts.join(" · ") || "context";
 }
 
+/** The line of a failed run's output that says what went wrong: our own
+ *  "herdr-context: ..." line, else Node's "SomeError: ..." line (Node prints
+ *  the source location first), else the first non-empty line. */
+export function errorLine(output) {
+  const lines = String(output ?? "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  return (
+    lines.find((l) => l.startsWith("herdr-context:")) ??
+    lines.find((l) => /^[A-Z]\w*(Error|Exception)\b/.test(l)) ??
+    lines[0] ??
+    ""
+  );
+}
+
 /** Last path segment, for compact file lists. */
 export function baseName(p) {
   const s = String(p ?? "").replace(/\\/g, "/");

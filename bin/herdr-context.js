@@ -18,6 +18,15 @@ import { loadClaudeSession } from '../src/claude/load.js';
 import { collectQuotas } from '../src/quota/index.js';
 import { renderSession, renderQuotas, fmt, bar } from '../src/render.js';
 
+// Anything unexpected: one readable line on stderr (the Herdr mod shows it), not a stack.
+const die = (err) => {
+  console.error(`herdr-context: ${err?.name ?? 'Error'}: ${err?.message ?? err}`);
+  if (process.env.HERDR_CONTEXT_DEBUG) console.error(err?.stack);
+  process.exit(1);
+};
+process.on('uncaughtException', die);
+process.on('unhandledRejection', die);
+
 const { values: a, positionals } = parseArgs({
   allowPositionals: true,
   options: {
@@ -75,11 +84,22 @@ if (!entries.length) {
 }
 
 if (a.list) {
-  const rows = entries.slice(0, Number(a.limit) || 10).map((e) => loadClaudeSession(e));
+  // One unreadable session must not hide the others: it becomes an {error} row.
+  const rows = entries.slice(0, Number(a.limit) || 10).map((e) => {
+    try {
+      return loadClaudeSession(e);
+    } catch (err) {
+      return { agent: 'claude', sessionId: e.sessionId, file: e.file, error: `${err.name}: ${err.message}` };
+    }
+  });
   if (a.json) {
     console.log(JSON.stringify(rows, null, 2));
   } else {
     for (const s of rows) {
+      if (s.error) {
+        console.log(`${(s.sessionId || '?').slice(0, 8)}  could not read: ${s.error}`);
+        continue;
+      }
       const c = s.context;
       const p = c.percent == null ? '   ?' : `${String(Math.round(c.percent * 100)).padStart(3)}%`;
       console.log(`${(s.sessionId || '?').slice(0, 8)}  ${bar(c.percent, 12)} ${p}  ${fmt(c.tokens).padStart(6)}  ${String(s.requestCount).padStart(4)} req  ${s.lastTs ?? ''}  ${s.cwd ?? ''}`);

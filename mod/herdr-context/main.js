@@ -6,7 +6,7 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { exec, appHome, readTextFile, theme, focused, panes, props, checking } from "herdr";
-import { pickSession, fmt, pctText, sparkline, resetsIn, ago, level, worstWindow, makeup, chipText, baseName } from "./logic.js";
+import { pickSession, fmt, pctText, sparkline, resetsIn, ago, level, worstWindow, makeup, chipText, baseName, errorLine } from "./logic.js";
 import { SAMPLE_SESSIONS, SAMPLE_QUOTA } from "./sample.js";
 
 const CONTEXT_EVERY_MS = 15_000;
@@ -49,7 +49,7 @@ export default class HerdrContext extends View {
     }
     const r = await exec(this.config.node || "node", [this.config.cli, ...args], { timeout: 90_000 });
     if (r.code !== 0) {
-      const msg = (r.stderr || r.stdout || "").trim().split("\n")[0];
+      const msg = errorLine(r.stderr || r.stdout || "");
       if (/no Claude Code session logs found/.test(msg)) return [];
       throw new Error(msg || `herdr-context exited with ${r.code}`);
     }

@@ -34,10 +34,13 @@ claude · 1dea6540 · ~/work/api (main) · claude-opus-5-5 · v2.1.330
 git clone https://github.com/TangJc722/herdr-context && cd herdr-context
 node bin/install-mod.js                                   # 把 mod 和命令行工具复制到 ~/.config/herdr-app/mods/herdr-context
 herdr-app check ~/.config/herdr-app/mods/herdr-context    # Herdr 官方检查
+herdr-app do pane.split --direction right --mod herdr-context   # 打开面板
 ```
 
-Herdr 第一次发现这个 mod 时，会自动把面板放在窗口右侧。更新时重新运行 `install-mod.js` 即可；
-`node bin/install-mod.js --uninstall` 可以卸载。
+Herdr 自带的 `main` 布局是只读的，不会自动加入新的 mod，所以需要把面板作为窗格打开
+（用上面的命令，它会随标签页一起保存；也可以用命令面板里的拆分功能），或者像下面的状态栏小标签那样加到复制出来的布局里。
+更新时重新运行 `install-mod.js` 即可；`node bin/install-mod.js --uninstall` 可以卸载。
+支持 Windows：npm 以 `.cmd` 包装文件形式安装的命令（claude、codex、quota-axi）也能被找到，并且不经过 shell 直接启动。
 同时建议配置 statusLine 采集器（安装脚本会打印出完整的配置行），否则面板只显示 token 数量，不显示百分比。
 
 工作原理：

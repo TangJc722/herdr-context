@@ -243,11 +243,13 @@ export class ClaudeSession {
     const toolsEst = shape?.tools?.reduce((n, t) => n + t.tokens, 0) ?? 0;
     const sysEst = shape?.systemPrompt ?? 0;
     let topTools = null;
-    if (toolsEst + sysEst > 0) {
+    // Split only when the snapshot had both parts: a snapshot with a system
+    // prompt but no tool list says nothing about how big the tools are.
+    if (toolsEst > 0 && sysEst > 0) {
       const toolTokens = Math.round((baseline * toolsEst) / (toolsEst + sysEst));
       parts.push({ category: 'systemPrompt', tokens: baseline - toolTokens });
       parts.push({ category: 'toolDefinitions', tokens: toolTokens });
-      const scale = toolsEst ? toolTokens / toolsEst : 0;
+      const scale = toolTokens / toolsEst;
       topTools = shape.tools.slice(0, 8).map((t) => ({ name: t.name, tokens: Math.round(t.tokens * scale) }));
     } else {
       parts.push({ category: 'systemAndTools', tokens: baseline });
@@ -255,12 +257,20 @@ export class ClaudeSession {
     if (estSum === 0) {
       parts.push({ category: 'unattributed', tokens: rest });
     } else {
-      let given = 0;
-      CATEGORIES.forEach((c, i) => {
-        const t = i === CATEGORIES.length - 1 ? rest - given : Math.round((rest * est[c]) / estSum);
-        given += t;
-        parts.push({ category: c, tokens: t });
-      });
+      // Largest-remainder split: whole tokens that always add up to `rest`.
+      const raw = CATEGORIES.map((c) => (rest * est[c]) / estSum);
+      const whole = raw.map(Math.floor);
+      let left = rest - whole.reduce((a, b) => a + b, 0);
+      raw
+        .map((x, i) => [x - whole[i], i])
+        .sort((a, b) => b[0] - a[0])
+        .forEach(([, i]) => {
+          if (left > 0) {
+            whole[i]++;
+            left--;
+          }
+        });
+      CATEGORIES.forEach((c, i) => parts.push({ category: c, tokens: whole[i] }));
     }
     return { total, estimated: true, parts: parts.filter((p) => p.tokens > 0), topTools };
   }
