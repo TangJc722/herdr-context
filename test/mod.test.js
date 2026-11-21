@@ -276,7 +276,7 @@ test('mod main.js: fetches through the bundled CLI and draws panel and chip', as
   assert.equal(globalThis.__herdr.execCalls.length, 0);
   // ...but it draws the built-in sample, so the check renders every part
   const preview = texts(idle.render());
-  for (const want of ['claude-sample · main', '61%', 'MAKEUP', 'app.js', 'src/', 'Kiro', 'AGENTS IN THIS SPACE', 'fix login', 'Cursor: quota-axi not installed', 'codex week', '93%']) {
+  for (const want of ['claude-sample · main', '61%', 'MAKEUP', 'app.js', 'src/', 'Kiro', 'AGENTS IN THIS SPACE', 'fix login', 'Cursor: quota-axi not installed', 'Codex week', '93%']) {
     assert.ok(preview.some((s) => s.includes(want)), `preview shows ${want}`);
   }
 
@@ -375,6 +375,26 @@ test('mod main.js: fetches through the bundled CLI and draws panel and chip', as
   closeClick(sb.render())();
   assert.deepEqual(globalThis.__herdr.runCalls, [['layout.hide', { id: 'panel' }]]);
   globalThis.__herdr.layout = { id: 'root', type: 'row', children: [] };
+
+  // language: the 中/EN button flips shared state; panel and chip follow
+  globalThis.__herdr.props = {};
+  globalThis.__herdr.focused = { tab: 't1', pane: 'p1', terminal: 'tm1', cwd: '/p' };
+  globalThis.__herdr.panes = [{ pane: 'p1', terminal: 'tm1', tab: 't1', focused: true, cwd: '/p', app: 'claude-code' }];
+  const langClick = (n) => (n.ids.includes('hc-lang') ? n.clickFn : n.kids.map(langClick).find(Boolean));
+  globalThis.__herdr.shared = {};
+  assert.ok(texts(m.render()).includes('中'), 'English shows the 中 button');
+  langClick(m.render())();
+  assert.equal(globalThis.__herdr.shared['herdr-context.lang'], 'zh');
+  const zh = texts(m.render());
+  for (const want of ['上下文', '上下文组成', '文件', '订阅用量', 'tokens 在上下文中', 'EN']) {
+    assert.ok(zh.some((x) => x.includes(want)), `zh shows ${want}: ${JSON.stringify(zh)}`);
+  }
+  assert.ok(!zh.includes('MAKEUP'), 'no English section titles left');
+  globalThis.__herdr.props = { view: 'chip' };
+  assert.ok(texts(m.render()).includes('ctx'), 'ctx stays English');
+  globalThis.__herdr.props = {};
+  langClick(m.render())();
+  assert.equal(globalThis.__herdr.shared['herdr-context.lang'], 'en');
 
   // missing config: a readable error, no crash
   fs.rmSync(path.join(appHome, 'mods', 'herdr-context', 'config.json'));

@@ -66,6 +66,11 @@ How it works:
   terminal. A pane without an agent borrows nothing; the panel lists the space's
   Claude agents instead (click one to go to it), as it also does whenever a space
   has several. Context is Claude Code only for now; other agents' panes say so.
+- English or Simplified Chinese: the 中/EN button in the panel header (kept in
+  Herdr's shared state, so panel and chip switch together and it is remembered).
+  Established terms stay English in both: tokens, cache, agent, System Prompt, ctx.
+- Claude's reset times ("Nov 22, 2:20am (Asia/Shanghai)") are read as local time
+  and shown like the others ("in 2h 5m").
 - Layout: the agent's card (occupancy, bar, a mini chart of the last 48 requests),
   makeup as one stacked bar with a legend, recent files, then one card per
   subscription with numbers; providers that aren't set up fold into one line

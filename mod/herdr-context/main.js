@@ -3,18 +3,22 @@
 // herdr-context CLI bundled next to this file (cli/), run through exec().
 //
 // props: { view: "chip" } draws the one-line status-bar chip instead of the panel.
+// Language: shared("herdr-context.lang") = "en" | "zh", toggled from the panel header;
+// shared state, so the panel and the chip switch together and it survives restarts.
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { exec, appHome, home, readTextFile, theme, focused, panes, agents, spaces, props, checking, layout, run, shared, setShared } from "herdr";
 import {
-  choosePane, pickSession, fmt, pctText, resetsIn, ago, level, worstWindow, errorLine, panelState, toggleCommands,
+  choosePane, pickSession, fmt, pctText, level, worstWindow, errorLine, panelState, toggleCommands,
   makeupParts, displayPath, trendBars, spaceAgents, splitProviders, providerName, baseName,
 } from "./logic.js";
+import { translator, categoryLabel, windowLabel, resetsText, agoText, normLang } from "./i18n.js";
 import { SAMPLE_SESSIONS, SAMPLE_QUOTA, SAMPLE_AGENTS } from "./sample.js";
 
 const CONTEXT_EVERY_MS = 15_000;
 const QUOTA_EVERY_MS = 120_000;
 const MOD_DIR = () => `${appHome()}/mods/herdr-context`;
+const LANG_KEY = "herdr-context.lang";
 
 export default class HerdrContext extends View {
   init(_props, cx) {
@@ -117,6 +121,10 @@ export default class HerdrContext extends View {
     return { pane: target, cwd: target.cwd, session, agents: spaceAgents(agents(), panes(), sessions, space) };
   }
 
+  lang() {
+    return normLang(shared(LANG_KEY));
+  }
+
   // ---------- pieces ----------
 
   color(t, usedPercent) {
@@ -137,20 +145,16 @@ export default class HerdrContext extends View {
 
   label(t, text, aside) {
     return h_flex().items_center()
-      .child(div().flex_1().text_size(10.5).font_semibold().text_color(t.dim).child(text.toUpperCase()))
+      .child(div().flex_1().text_size(10.5).font_semibold().text_color(t.dim).child(this.lang() === "zh" ? text : text.toUpperCase()))
       .when(Boolean(aside), (el) => el.child(div().text_size(10.5).text_color(t.dim).child(aside)));
   }
 
-  section(t, title, ...children) {
-    return this.sectionAside(t, title, null, ...children);
-  }
-
-  sectionAside(t, title, aside, ...children) {
+  section(t, title, aside, ...children) {
     return v_flex().gap(8).child(this.label(t, title, aside)).children(children.filter(Boolean));
   }
 
   iconButton(t, id, glyph, tip, onClick) {
-    return div().id(id).w(22).h(22).flex().items_center().justify_center().rounded(5).cursor_pointer()
+    return div().id(id).min_w(22).h(22).px(4).flex().items_center().justify_center().rounded(5).cursor_pointer()
       .text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground))
       .tooltip(tip).on_click(onClick).child(glyph);
   }
@@ -159,20 +163,23 @@ export default class HerdrContext extends View {
     for (const [cmd, args] of toggleCommands(panelState(layout()))) run(cmd, args);
   }
 
-  header(t) {
+  header(t, tr) {
     const busy = this.loading || this.quotaLoading;
     const open = panelState(layout()).open;
+    const zh = this.lang() === "zh";
     return h_flex().h(28).gap(2).items_center()
-      .child(div().flex_1().text_size(13).font_semibold().text_color(t.foreground).child("Context"))
-      .child(div().text_size(11).text_color(t.dim).pr(4).child(busy ? "updating…" : ago(this.at)))
-      .child(this.iconButton(t, "hc-refresh", "↻", "Refresh now (also re-asks every subscription)",
+      .child(div().flex_1().text_size(13).font_semibold().text_color(t.foreground).child(tr("title")))
+      .child(div().text_size(11).text_color(t.dim).pr(4).child(busy ? tr("updating") : agoText(this.at, this.lang())))
+      .child(this.iconButton(t, "hc-lang", div().text_size(11).child(zh ? "EN" : "中"), tr("langTip"),
+        () => setShared(LANG_KEY, zh ? "en" : "zh")))
+      .child(this.iconButton(t, "hc-refresh", "↻", tr("refreshTip"),
         (_e, cx) => { this.refreshContext(cx); this.refreshQuota(cx, true); }))
-      .when(open, (el) => el.child(this.iconButton(t, "hc-close", "✕", "Close (or click the chip in the status bar)", () => this.toggle())));
+      .when(open, (el) => el.child(this.iconButton(t, "hc-close", "✕", tr("closeTip"), () => this.toggle())));
   }
 
   // ---------- the focused agent ----------
 
-  focusCard(t, session, cwd) {
+  focusCard(t, tr, session, cwd) {
     const c = session.context ?? {};
     const pct = c.percent != null ? c.percent * 100 : null;
     const where = [session.model, session.gitBranch && session.gitBranch !== "HEAD" ? session.gitBranch : null].filter(Boolean).join(" · ");
@@ -184,9 +191,9 @@ export default class HerdrContext extends View {
         .child(div().text_size(26).font_semibold().text_color(pct != null ? this.valueColor(t, pct) : t.foreground)
           .child(pct != null ? pctText(c.percent) : fmt(c.tokens)))
         .child(div().pb(4).text_size(11.5).text_color(t.muted)
-          .child(c.window ? `${fmt(c.tokens)} of ${fmt(c.window)} tokens` : "tokens in context")));
+          .child(c.window ? tr("tokensOf", { used: fmt(c.tokens), window: fmt(c.window) }) : tr("tokensInContext"))));
     if (pct != null) card.child(this.bar(t, c.percent, this.color(t, pct), 6));
-    else card.child(div().text_size(11).text_color(t.dim).child("Add the statusLine collector to see the % (README)."));
+    else card.child(div().text_size(11).text_color(t.dim).child(tr("addCollector")));
 
     const bars = trendBars(session.trend, 48);
     if (bars.length > 1) {
@@ -195,23 +202,24 @@ export default class HerdrContext extends View {
     }
     const k = session.compactions ?? [];
     const facts = [
-      `${session.requestCount} requests`,
-      session.totals?.cacheHitRate != null ? `cache ${pctText(session.totals.cacheHitRate)}` : null,
-      k.length ? `compacted ${k.length}×` : "never compacted",
+      tr("requests", { n: session.requestCount }),
+      session.totals?.cacheHitRate != null ? tr("cacheHit", { pct: pctText(session.totals.cacheHitRate) }) : null,
+      k.length ? tr("compacted", { n: k.length }) : tr("neverCompacted"),
       session.cost?.totalUSD != null ? `$${session.cost.totalUSD.toFixed(2)}` : null,
     ].filter(Boolean);
     card.child(div().text_size(11).text_color(t.dim).truncate().child(facts.join("  ·  ")));
     return card;
   }
 
-  makeupSection(t, session) {
+  makeupSection(t, tr, session) {
+    const lang = this.lang();
     const parts = makeupParts(session);
     if (!parts.length) return null;
     const stacked = h_flex().w_full().h(8).rounded(4).overflow_hidden().gap(1)
       .children(parts.map((p) => div().h_full().w(`${p.share * 100}%`).bg(t[p.color] ?? t.accent)));
     const item = (p) => h_flex().flex_1().gap(6).items_center()
       .child(div().w(8).h(8).rounded(2).bg(t[p.color] ?? t.accent))
-      .child(div().flex_1().text_size(11.5).text_color(t.muted).truncate().child(p.label))
+      .child(div().flex_1().text_size(11.5).text_color(t.muted).truncate().child(categoryLabel(p.key, lang)))
       .child(div().text_size(11.5).text_color(t.foreground).child(pctText(p.share)));
     const top = parts.slice(0, 6);
     const rows = [];
@@ -219,110 +227,117 @@ export default class HerdrContext extends View {
       rows.push(h_flex().gap(14).child(item(top[i])).child(top[i + 1] ? item(top[i + 1]) : div().flex_1()));
     }
     const heavy = session.composition?.topTools?.slice(0, 3) ?? [];
-    return this.section(t, "Makeup", stacked, v_flex().gap(5).children(rows),
-      heavy.length ? div().text_size(10.5).text_color(t.dim).truncate().child(`heaviest tools  ${heavy.map((x) => `${x.name} ${fmt(x.tokens)}`).join(" · ")}`) : null);
+    return this.section(t, tr("makeup"), null, stacked, v_flex().gap(5).children(rows),
+      heavy.length ? div().text_size(10.5).text_color(t.dim).truncate().child(`${tr("heaviestTools")}  ${heavy.map((x) => `${x.name} ${fmt(x.tokens)}`).join(" · ")}`) : null);
   }
 
-  filesSection(t, session) {
+  filesSection(t, tr, session) {
     const files = (session.files ?? []).slice(0, 5);
     if (!files.length) return null;
-    return this.section(t, "Files", v_flex().gap(4).children(files.map((f) => {
+    return this.section(t, tr("files"), null, v_flex().gap(4).children(files.map((f) => {
       const d = displayPath(f.path, session.cwd, home());
       const n = f.edit + f.write;
       return h_flex().gap(6).items_center()
         .child(div().text_size(12).text_color(n ? t.foreground : t.muted).child(d.name))
         .child(div().flex_1().text_size(11).text_color(t.dim).truncate().child(d.dir))
-        .child(div().text_size(10.5).text_color(n ? t.muted : t.dim).child(n ? `✎ ${n}` : "read"));
+        .child(div().text_size(10.5).text_color(n ? t.muted : t.dim).child(n ? `✎ ${n}` : tr("read")));
     })));
   }
 
-  agentsSection(t, list, focusedCwd) {
+  agentsSection(t, tr, list, focusedCwd) {
     if (!list.length) return null;
-    return this.section(t, "Agents in this space", v_flex().gap(2).children(list.map((a, i) => {
+    // Without a window size there is no %, so bars compare the agents' token counts.
+    const most = Math.max(1, ...list.map((a) => a.session?.context?.tokens ?? 0));
+    return this.section(t, tr("agents"), null, v_flex().gap(2).children(list.map((a, i) => {
       const c = a.session?.context ?? {};
       const pct = c.percent != null ? c.percent * 100 : null;
       const here = a.cwd && a.cwd === focusedCwd;
+      const folder = baseName(a.cwd);
       return h_flex().id(`hc-agent-${i}`).gap(8).px(8).py(6).rounded(6).items_center().cursor_pointer()
         .when(here, (el) => el.bg(t.selected))
         .hover((s) => s.bg(t.hover))
         .tooltip(a.cwd ?? "")
         .on_click(() => { if (!this.preview) run("agent.focus", { terminal: a.address }); })
         .child(div().w(6).h(6).rounded_full().bg(t[a.status] ?? t.idle))
-        .child(div().flex_1().text_size(12).text_color(t.foreground).truncate().child(a.title))
-        .child(div().w(56).child(this.bar(t, c.percent ?? 0, pct != null ? this.color(t, pct) : t.dim, 4)))
+        .child(div().text_size(12).text_color(t.foreground).truncate().child(a.title))
+        .child(div().flex_1().text_size(11).text_color(t.dim).truncate().child(folder && folder !== a.title ? folder : ""))
+        .child(div().w(56).child(this.bar(t, pct != null ? c.percent : (c.tokens ?? 0) / most,
+          pct != null ? this.color(t, pct) : t.dim, 4)))
         .child(div().w(38).text_size(11).text_color(pct != null ? this.valueColor(t, pct) : t.muted)
           .child(c.tokens == null ? "—" : pct != null ? pctText(c.percent) : fmt(c.tokens)));
     })));
   }
 
-  contextPart(t) {
+  contextPart(t, tr) {
     const { pane, cwd, session, agents: list } = this.current();
     if (this.error && !this.sessions) return div().text_color(t.blocked).text_size(12).child(this.error);
     const out = [];
     if (session) {
-      out.push(this.focusCard(t, session, cwd));
+      out.push(this.focusCard(t, tr, session, cwd));
     } else {
-      const why = this.sessions == null ? "Loading…"
-        : !cwd ? "No terminal in this tab."
-        : pane?.app ? `${pane.app}: the context view supports Claude Code for now.`
-        : list.length ? "No agent in this pane. Pick one below." : "No agent in this pane.";
+      const why = this.sessions == null ? tr("loading")
+        : !cwd ? tr("noTerminal")
+        : pane?.app ? tr("otherAgent", { app: pane.app })
+        : list.length ? tr("noAgentPick") : tr("noAgent");
       out.push(v_flex().p(12).rounded(10).border(1).border_color(t.border)
         .child(div().text_size(12).text_color(t.muted).child(why)));
     }
     // the space's agents: when this pane has none, or when there are several to compare
-    if (list.length && (!session || list.length > 1)) out.push(this.agentsSection(t, list, cwd));
+    if (list.length && (!session || list.length > 1)) out.push(this.agentsSection(t, tr, list, cwd));
     if (session) {
-      out.push(this.makeupSection(t, session));
-      out.push(this.filesSection(t, session));
+      out.push(this.makeupSection(t, tr, session));
+      out.push(this.filesSection(t, tr, session));
     }
     return v_flex().gap(18).children(out.filter(Boolean));
   }
 
   // ---------- subscriptions ----------
 
-  providerCard(t, p) {
+  providerCard(t, tr, p) {
+    const lang = this.lang();
     const head = h_flex().gap(6).items_center()
       .child(div().text_size(12.5).font_semibold().text_color(t.foreground).child(providerName(p.provider)))
       .when(Boolean(p.plan), (el) => el.child(div().px(5).py(1).rounded(4).bg(t.raised).text_size(10).text_color(t.muted).child(String(p.plan))))
       .child(div().flex_1())
-      .when(p.status === "stale", (el) => el.child(div().text_size(10.5).text_color(t.dim).child("stale")));
+      .when(p.status === "stale", (el) => el.child(div().text_size(10.5).text_color(t.dim).child(tr("stale"))));
     const rows = p.windows.map((w) => {
-      const when = w.id === "bonus" ? resetsIn(w.resetsAt).replace(/^in /, "ends in ") : w.resetsAt ? resetsIn(w.resetsAt) : (w.detail ?? "").replace(/^resets /, "");
+      const when = w.resetsAt ? resetsText(w.resetsAt, lang) : (w.detail ?? "").replace(/^resets /, "");
       return h_flex().gap(8).items_center()
-        .child(div().w(44).text_size(11.5).text_color(t.muted).truncate().child(w.label))
+        .child(div().w(lang === "zh" ? 64 : 44).text_size(11.5).text_color(t.muted).truncate().child(windowLabel(w.label, lang)))
         .child(div().flex_1().child(this.bar(t, w.usedPercent / 100, this.color(t, w.usedPercent), 5)))
         .child(div().w(36).text_size(12).font_semibold().text_color(this.valueColor(t, w.usedPercent)).child(`${Math.round(w.usedPercent)}%`))
-        .child(div().w(64).text_size(10.5).text_color(t.dim).truncate().child(when));
+        .child(div().w(lang === "zh" ? 80 : 64).text_size(10.5).text_color(t.dim).truncate().child(when));
     });
+    const tip = [tr("via", { source: p.source }), p.observedAt ? tr("asOf", { time: p.observedAt.replace("T", " ").slice(0, 16) }) : null].filter(Boolean).join(" · ");
     return v_flex().gap(7).p(10).rounded(8).bg(t.surface).border(1).border_color(t.border)
-      .tooltip(`via ${p.source}${p.observedAt ? ` · as of ${p.observedAt.replace("T", " ").slice(0, 16)}` : ""}`)
-      .child(head).children(rows);
+      .tooltip(tip).child(head).children(rows);
   }
 
-  quotaPart(t) {
-    if (this.quotaError && !this.quota) return this.section(t, "Subscriptions", div().text_size(12).text_color(t.blocked).child(this.quotaError));
-    if (!this.quota) return this.section(t, "Subscriptions", div().text_size(12).text_color(t.dim).child("Loading…"));
+  quotaPart(t, tr) {
+    const title = tr("subscriptions");
+    if (this.quotaError && !this.quota) return this.section(t, title, null, div().text_size(12).text_color(t.blocked).child(this.quotaError));
+    if (!this.quota) return this.section(t, title, null, div().text_size(12).text_color(t.dim).child(tr("loading")));
     const { shown, missing } = splitProviders(this.quota);
-    const out = shown.map((p) => this.providerCard(t, p));
+    const out = shown.map((p) => this.providerCard(t, tr, p));
     if (missing.length) {
       out.push(h_flex().id("hc-missing").gap(6).items_center()
         .tooltip(missing.map((m) => `${m.name}: ${m.why}`).join("\n"))
         .child(div().text_size(11).text_color(t.dim).truncate()
-          .child(`Not set up: ${missing.map((m) => m.name).join(", ")}`))
+          .child(tr("notSetUp", { names: missing.map((m) => m.name).join(", ") })))
         .child(div().text_size(11).text_color(t.dim).child("ⓘ")));
     }
-    return this.sectionAside(t, "Subscriptions", this.quotaAt ? ago(this.quotaAt) : null, ...out);
+    return this.section(t, title, this.quotaAt ? agoText(this.quotaAt, this.lang()) : null, ...out);
   }
 
   // ---------- views ----------
 
-  renderChip(t) {
+  renderChip(t, tr) {
+    const lang = this.lang();
     const { session } = this.current();
     const state = panelState(layout());
     const w = worstWindow(this.quota);
     const c = session?.context;
-    const tip = this.error ?? this.quotaError ??
-      (state.inSidebar ? `${state.open ? "Hide" : "Show"} context details` : "Context of the focused agent · fullest subscription window");
+    const tip = this.error ?? this.quotaError ?? (state.inSidebar ? tr(state.open ? "chipHide" : "chipShow") : tr("chipPlain"));
     const part = (labelText, value, color) => h_flex().gap(4).items_center()
       .child(div().text_color(t.dim).child(labelText))
       .child(div().text_color(color).child(value));
@@ -335,21 +350,22 @@ export default class HerdrContext extends View {
       const pct = c.percent != null ? c.percent * 100 : null;
       chip.child(part("ctx", pct != null ? pctText(c.percent) : fmt(c.tokens), pct != null ? this.valueColor(t, pct) : t.muted));
     }
-    if (w) chip.child(part(`${w.provider} ${w.window.label}`, `${Math.round(w.window.usedPercent)}%`, this.valueColor(t, w.window.usedPercent)));
-    if (c?.tokens == null && !w) chip.child(div().text_color(t.dim).child("context"));
+    if (w) chip.child(part(`${providerName(w.provider)} ${windowLabel(w.window.label, lang)}`, `${Math.round(w.window.usedPercent)}%`, this.valueColor(t, w.window.usedPercent)));
+    if (c?.tokens == null && !w) chip.child(div().text_color(t.dim).child(tr("chipEmpty")));
     return h_flex().size_full().px(6).items_center().justify_end().bg(t.chrome).border_t(1).border_color(t.border).text_size(11.8)
       .child(chip);
   }
 
   render() {
     const t = theme();
-    if (props()?.view === "chip") return this.renderChip(t);
+    const tr = translator(this.lang());
+    if (props()?.view === "chip") return this.renderChip(t, tr);
     return v_flex().id("hc-root").size_full().bg(t.chrome).px(14).pt(10).pb(14).gap(18).text_color(t.foreground)
       .overflow_y_scrollbar()
-      .child(this.header(t))
-      .child(this.contextPart(t))
-      .child(this.quotaPart(t))
+      .child(this.header(t, tr))
+      .child(this.contextPart(t, tr))
+      .child(this.quotaPart(t, tr))
       // `herdr-app check` renders the default view only: draw the chip too so it gets checked
-      .when(this.preview, (el) => el.child(div().h(28).child(this.renderChip(t))));
+      .when(this.preview, (el) => el.child(div().h(28).child(this.renderChip(t, tr))));
   }
 }

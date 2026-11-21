@@ -238,8 +238,11 @@ export function spaceAgents(agentList, paneList, sessions, spaceId) {
     .filter((a) => (!spaceId || a.space === spaceId) && /claude/i.test(a.app ?? ""))
     .map((a) => {
       const cwd = byPane.get(a.pane)?.cwd ?? null;
-      // an unnamed tab is called by its number ("1"): use the folder then, as the sidebar does
-      const named = a.tab_name && !/^\d+$/.test(String(a.tab_name).trim()) ? a.tab_name : null;
+      // An unnamed tab is called by its number ("1") or by its program ("Claude Code"):
+      // use the folder then, as the sidebar does.
+      const tn = String(a.tab_name ?? "").trim();
+      const generic = !tn || /^\d+$/.test(tn) || /^(claude( code)?|codex|bash|zsh|fish|sh|pwsh|powershell|cmd)$/i.test(tn);
+      const named = generic ? null : tn;
       const title = a.pane_name || named || baseName(cwd) || a.title || a.app;
       return { address: a.address, title, status: a.status, cwd, session: pickSession(sessions, cwd) };
     });

@@ -41,8 +41,37 @@ function windowFor(title) {
   return { id: `seven_day_${name.replace(/\W+/g, '_')}`, label: `${pretty} week`, windowMinutes: 10080 };
 }
 
+const MONTHS = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
+
+/**
+ * Claude Code prints reset times in the machine's local time zone, e.g.
+ * "3pm (Asia/Shanghai)", "2:20am (Asia/Shanghai)", "Nov 22, 2:20am (Asia/Shanghai)".
+ * This CLI runs on that machine, so local time is the same zone.
+ * @returns {string|null} ISO time, or null when the text isn't recognised
+ */
+export function parseClaudeReset(text, now = Date.now()) {
+  const s = String(text ?? '').replace(/\([^)]*\)/g, '').trim();
+  const m = s.match(/^(?:([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2}),?\s*)?(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/i);
+  if (!m) return null;
+  let hour = Number(m[3]) % 12;
+  if (m[5].toLowerCase() === 'pm') hour += 12;
+  const minute = Number(m[4] ?? 0);
+  const today = new Date(now);
+  let d;
+  if (m[1]) {
+    const month = MONTHS[m[1].toLowerCase()];
+    if (month === undefined) return null;
+    d = new Date(today.getFullYear(), month, Number(m[2]), hour, minute);
+    if (d.getTime() < now - 180 * 864e5) d.setFullYear(d.getFullYear() + 1); // "Jan 2" seen in December
+  } else {
+    d = new Date(today.getFullYear(), today.getMonth(), today.getDate(), hour, minute);
+    if (d.getTime() <= now) d.setDate(d.getDate() + 1); // a time already past today means tomorrow
+  }
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
 /** Parses the /usage text report. Returns windows (possibly empty). */
-export function parseClaudeUsage(raw) {
+export function parseClaudeUsage(raw, now = Date.now()) {
   let text = stripAnsi(raw).replace(/\r/g, '\n');
   const cut = text.search(/what'?s contributing/i);
   if (cut !== -1) text = text.slice(0, cut);
@@ -62,7 +91,7 @@ export function parseClaudeUsage(raw) {
       windows.push({
         ...windowFor(one[1]),
         usedPercent: /left|remaining/i.test(one[3] || '') ? 100 - n : n,
-        resetsAt: null,
+        resetsAt: one[4] ? parseClaudeReset(one[4], now) : null,
         detail: one[4] ? `resets ${one[4]}` : null,
       });
       continue;
@@ -81,7 +110,10 @@ export function parseClaudeUsage(raw) {
       cur.usedPercent = /left|remaining/i.test(pct[2] || '') ? 100 - n : n;
     }
     const reset = line.match(/\bResets?\b\s*(.+)$/i);
-    if (reset) cur.detail = `resets ${reset[1].trim()}`;
+    if (reset) {
+      cur.detail = `resets ${reset[1].trim()}`;
+      cur.resetsAt = parseClaudeReset(reset[1], now);
+    }
   }
   flush();
   return windows;
@@ -100,7 +132,7 @@ export function claudeCliQuota({ run = runCommand, env = process.env, now = Date
   if (r.notFound) return quota('claude', 'claude /usage', { status: 'not_found', message: 'claude CLI not installed' });
   if (r.timedOut) return quota('claude', 'claude /usage', { status: 'error', message: 'claude /usage timed out' });
   const out = `${r.stdout}\n${r.stderr}`;
-  const windows = parseClaudeUsage(out);
+  const windows = parseClaudeUsage(out, now);
   if (windows.length) {
     return quota('claude', 'claude /usage', { observedAt: new Date(now).toISOString(), windows, message: 'parsed from text; reset times shown as Claude prints them' });
   }
