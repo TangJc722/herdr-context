@@ -72,6 +72,49 @@ test('formatting helpers', () => {
   assert.equal(logic.baseName('C:\\a\\b\\c.js'), 'c.js');
 });
 
+test('redesign helpers: trend bars, paths, agents, providers, reset times', () => {
+  // scaled min..max so growth shows; flat input stays mid-height
+  assert.deepEqual(logic.trendBars([100, 150, 200], 48, 26, 3), [3, 15, 26]);
+  assert.deepEqual(logic.trendBars([5, 5]), [15, 15]);
+  assert.deepEqual(logic.trendBars([]), []);
+  assert.equal(logic.trendBars(Array.from({ length: 100 }, (_, i) => i)).length, 48);
+
+  assert.deepEqual(logic.displayPath('/w/api/src/app.js', '/w/api', '/home/me'), { dir: 'src/', name: 'app.js', full: 'src/app.js' });
+  assert.deepEqual(logic.displayPath('C:\\Users\\Tang\\.claude\\plugins\\hud\\config.json', 'C:\\work', 'C:\\Users\\Tang'), { dir: '~/.claude/plugins/hud/', name: 'config.json', full: '~/.claude/plugins/hud/config.json' });
+  assert.equal(logic.displayPath('c:/WORK/x.js', 'C:\\work', null).full, 'x.js');
+  assert.equal(logic.displayPath('/etc/hosts', '/w', '/home/me').full, '/etc/hosts');
+
+  const sessions = [{ sessionId: 'a', cwd: '/w/api', lastTs: '2026-11-21T10:00:00Z' }];
+  const list = logic.spaceAgents(
+    [
+      { address: 't1', pane: 'p1', space: 's1', tab_name: '1', title: 'Claude Code', app: 'claude-code', status: 'working' },
+      { address: 't2', pane: 'p2', space: 's1', tab_name: 'fix login', app: 'claude-code', status: 'idle' },
+      { address: 't3', pane: 'p3', space: 's1', tab_name: 'x', app: 'codex', status: 'idle' },
+      { address: 't4', pane: 'p4', space: 's2', tab_name: 'y', app: 'claude-code', status: 'idle' },
+    ],
+    [{ pane: 'p1', cwd: '/w/api' }, { pane: 'p2', cwd: '/w/web' }],
+    sessions,
+    's1',
+  );
+  assert.deepEqual(list.map((a) => [a.title, a.session?.sessionId ?? null]), [['api', 'a'], ['fix login', null]]);
+
+  const { shown, missing } = logic.splitProviders({
+    providers: [
+      { provider: 'claude', status: 'not_found', windows: [], message: 'no statusLine readings' },
+      { provider: 'codex', status: 'ok', windows: [{ usedPercent: 3 }] },
+      { provider: 'kiro', status: 'error', windows: [], message: 'boom' },
+    ],
+    notes: ['quota-axi not installed (npm i -g quota-axi)'],
+  });
+  assert.deepEqual(shown.map((p) => p.provider), ['codex']);
+  assert.deepEqual(missing.map((m) => m.name), ['Claude', 'Kiro', 'Cursor, Copilot…']);
+  assert.equal(logic.providerName('copilot'), 'Copilot');
+  assert.equal(logic.providerName('newco'), 'Newco');
+
+  const now = Date.parse('2026-11-21T12:00:00Z');
+  assert.equal(logic.resetsIn(new Date(now + 2 * 3600e3 - 10e3).toISOString(), now), 'in 2h 0m', 'never "1h 60m"');
+});
+
 test('worstWindow / chipText / makeup', () => {
   const quota = { providers: [
     { provider: 'claude', status: 'ok', windows: [{ label: '5h', usedPercent: 37 }] },
@@ -147,6 +190,9 @@ const STUBS = {
     export const props = () => S().props;
     export const checking = () => S().checking;
     export const appHome = () => S().appHome;
+    export const home = () => S().home ?? '/home/someone';
+    export const agents = () => S().agents ?? [];
+    export const spaces = () => S().spaces ?? [];
     export const layout = () => S().layout;
     export const run = (cmd, args) => { S().runCalls.push([cmd, args]); return null; };
     export const shared = (k) => S().shared[k];
@@ -230,7 +276,7 @@ test('mod main.js: fetches through the bundled CLI and draws panel and chip', as
   assert.equal(globalThis.__herdr.execCalls.length, 0);
   // ...but it draws the built-in sample, so the check renders every part
   const preview = texts(idle.render());
-  for (const want of ['claude-sample · main', '61%', 'MAKEUP', 'src/app.js', 'kiro', 'quota-axi not installed', 'ctx 61% · codex week 93%']) {
+  for (const want of ['claude-sample · main', '61%', 'MAKEUP', 'app.js', 'src/', 'Kiro', 'AGENTS IN THIS SPACE', 'fix login', 'Cursor: quota-axi not installed', 'codex week', '93%']) {
     assert.ok(preview.some((s) => s.includes(want)), `preview shows ${want}`);
   }
 
@@ -250,7 +296,7 @@ test('mod main.js: fetches through the bundled CLI and draws panel and chip', as
 
   const panel = texts(m.render());
   const odd = panel.filter((s) => typeof s !== "string"); assert.deepEqual(odd, [], "non-text children: " + odd.map(String).join(","));
-  for (const want of ['Context', 'THIS PANE', 'MAKEUP', 'FILES', 'b.js', 'SUBSCRIPTIONS', 'claude', 'codex', 'kiro']) {
+  for (const want of ['Context', 'MAKEUP', 'FILES', 'b.js', 'SUBSCRIPTIONS', 'Not set up: Claude, Codex, Kiro']) {
     assert.ok(panel.some((s) => s.includes(want)), `panel shows ${want}: ${JSON.stringify(panel)}`);
   }
   assert.ok(panel.includes('1.3k'), 'context tokens (1305) without a window size');
@@ -258,7 +304,25 @@ test('mod main.js: fetches through the bundled CLI and draws panel and chip', as
   // another folder: explains instead of showing the wrong session
   globalThis.__herdr.focused = { cwd: '/elsewhere' };
   globalThis.__herdr.panes = [{ pane: 'p2', terminal: 'tm2', tab: 't1', focused: true, cwd: '/elsewhere', app: 'codex' }];
-  assert.ok(texts(m.render()).includes('codex: context view supports Claude Code for now.'));
+  assert.ok(texts(m.render()).includes('codex: the context view supports Claude Code for now.'));
+
+  // a plain shell (no agent) in a parent folder: no borrowed session, the space's agents instead
+  globalThis.__herdr.focused = { space: 's1', tab: 't2', pane: 'p3', terminal: 'tm3', cwd: '/' };
+  globalThis.__herdr.panes = [
+    { pane: 'p1', terminal: 'tm1', tab: 't1', focused: false, cwd: '/p', app: 'claude-code' },
+    { pane: 'p3', terminal: 'tm3', tab: 't2', focused: true, cwd: '/', app: null },
+  ];
+  globalThis.__herdr.agents = [{ address: 'tm1', pane: 'p1', space: 's1', tab: 't1', tab_name: '1', title: 'Claude Code', app: 'claude-code', status: 'working' }];
+  const shell = texts(m.render());
+  assert.ok(shell.includes('No agent in this pane. Pick one below.'), JSON.stringify(shell));
+  assert.ok(shell.includes('AGENTS IN THIS SPACE'));
+  assert.ok(shell.includes('p'), 'unnamed tab "1" shows as its folder');
+  assert.ok(!shell.includes('MAKEUP'), 'no session borrowed from a sub-folder');
+  const agentClick = (n) => (n.ids.includes('hc-agent-0') ? n.clickFn : n.kids.map(agentClick).find(Boolean));
+  globalThis.__herdr.runCalls = [];
+  agentClick(m.render())();
+  assert.deepEqual(globalThis.__herdr.runCalls, [['agent.focus', { terminal: 'tm1' }]]);
+  globalThis.__herdr.agents = [];
 
   // the panel itself focused (what clicking it does): still shows the tab's terminal
   globalThis.__herdr.focused = { tab: 't1', pane: 'pm', terminal: null, cwd: null };
@@ -272,7 +336,8 @@ test('mod main.js: fetches through the bundled CLI and draws panel and chip', as
   globalThis.__herdr.focused = { tab: 't1', pane: 'p1', terminal: 'tm1', cwd: '/p' };
   globalThis.__herdr.panes = [{ pane: 'p1', terminal: 'tm1', tab: 't1', focused: true, cwd: '/p', app: 'claude-code' }];
   globalThis.__herdr.props = { view: 'chip' };
-  assert.ok(texts(m.render()).includes('ctx 1.3k'));
+  const chip = texts(m.render());
+  assert.ok(chip.includes('ctx') && chip.includes('1.3k'), JSON.stringify(chip));
 
   // refresh button re-asks with --refresh
   globalThis.__herdr.props = {};

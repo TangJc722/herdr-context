@@ -37,6 +37,11 @@ export const SAMPLE_SESSIONS = [
   },
 ];
 
+export const SAMPLE_AGENTS = [
+  { address: "t1", title: "fix login", status: "working", cwd: "/sample/project" },
+  { address: "t2", title: "write tests", status: "idle", cwd: "/sample/other" },
+];
+
 export const SAMPLE_QUOTA = {
   generatedAt: new Date().toISOString(),
   providers: [

@@ -89,9 +89,9 @@ export function resetsIn(iso, now = Date.now()) {
   if (!Number.isFinite(t)) return "";
   const ms = t - now;
   if (ms <= 0) return "now";
-  const h = Math.floor(ms / 3.6e6);
-  const m = Math.round((ms % 3.6e6) / 6e4);
-  return h >= 24 ? `in ${Math.floor(h / 24)}d ${h % 24}h` : `in ${h}h ${m}m`;
+  const mins = Math.round(ms / 6e4); // round once, so it never reads "1h 60m"
+  const h = Math.floor(mins / 60);
+  return h >= 24 ? `in ${Math.floor(h / 24)}d ${h % 24}h` : `in ${h}h ${mins % 60}m`;
 }
 
 export function ago(ms, now = Date.now()) {
@@ -181,6 +181,85 @@ export function toggleCommands(state) {
   return state.open
     ? [["layout.hide", { id: "panel" }]]
     : [["layout.select", { stack: "panel-body", child: "context" }], ["layout.show", { id: "panel" }]];
+}
+
+/** Theme colour names for each makeup category (theme().ansiN), stable across views. */
+export const CATEGORY_COLORS = {
+  toolResult: "ansi4",
+  toolUse: "ansi6",
+  assistant: "ansi5",
+  user: "ansi2",
+  toolDefinitions: "ansi3",
+  systemPrompt: "ansi11",
+  systemAndTools: "ansi3",
+  injected: "ansi8",
+  compactSummary: "ansi13",
+  unattributed: "ansi8",
+};
+
+/** Makeup with each part's colour name, largest first. */
+export function makeupParts(session) {
+  const c = session?.composition;
+  if (!c?.parts?.length || !c.total) return [];
+  return c.parts
+    .filter((p) => p.tokens > 0)
+    .map((p) => ({ key: p.category, label: LABELS[p.category] ?? p.category, tokens: p.tokens, share: p.tokens / c.total, color: CATEGORY_COLORS[p.category] ?? "ansi8" }))
+    .sort((a, b) => b.tokens - a.tokens);
+}
+
+/** A file path for display: relative to the project, else ~/..., split into folder and name. */
+export function displayPath(p, cwd, home) {
+  let s = String(p ?? "").replace(/\\/g, "/");
+  const c = normPath(cwd);
+  const h = normPath(home);
+  const cmp = (x) => (/^[a-z]:\//.test(normPath(x) ?? "") ? x.toLowerCase() : x);
+  if (c && cmp(s).startsWith(cmp(c) + "/")) s = s.slice(c.length + 1);
+  else if (h && cmp(s).startsWith(cmp(h) + "/")) s = "~/" + s.slice(h.length + 1);
+  const i = s.lastIndexOf("/");
+  return { dir: i === -1 ? "" : s.slice(0, i + 1), name: i === -1 ? s : s.slice(i + 1), full: s };
+}
+
+/** Bar heights (px) for a mini chart of the last `n` values, scaled from the
+ *  smallest to the largest shown so growth and compaction drops stay visible
+ *  (context sizes move within a narrow band relative to zero). */
+export function trendBars(values, n = 48, max = 26, min = 3) {
+  const v = (values || []).filter(Number.isFinite).slice(-n);
+  if (!v.length) return [];
+  const lo = Math.min(...v);
+  const hi = Math.max(...v);
+  if (hi === lo) return v.map(() => Math.round((min + max) / 2));
+  return v.map((x) => Math.round(min + ((x - lo) / (hi - lo)) * (max - min)));
+}
+
+/** Claude agents in a space, each with its session (by its pane's folder). */
+export function spaceAgents(agentList, paneList, sessions, spaceId) {
+  const byPane = new Map((paneList ?? []).map((p) => [p.pane, p]));
+  return (agentList ?? [])
+    .filter((a) => (!spaceId || a.space === spaceId) && /claude/i.test(a.app ?? ""))
+    .map((a) => {
+      const cwd = byPane.get(a.pane)?.cwd ?? null;
+      // an unnamed tab is called by its number ("1"): use the folder then, as the sidebar does
+      const named = a.tab_name && !/^\d+$/.test(String(a.tab_name).trim()) ? a.tab_name : null;
+      const title = a.pane_name || named || baseName(cwd) || a.title || a.app;
+      return { address: a.address, title, status: a.status, cwd, session: pickSession(sessions, cwd) };
+    });
+}
+
+const PROVIDER_NAMES = { claude: "Claude", codex: "Codex", kiro: "Kiro", cursor: "Cursor", copilot: "Copilot", grok: "Grok" };
+export const providerName = (id) => PROVIDER_NAMES[id] ?? (id ? id.charAt(0).toUpperCase() + id.slice(1) : "?");
+
+/** Providers with numbers, and the rest folded into one "not set up" line. */
+export function splitProviders(quota) {
+  const shown = [];
+  const missing = [];
+  for (const p of quota?.providers ?? []) {
+    if ((p.status === "ok" || p.status === "stale") && p.windows?.length) shown.push(p);
+    else missing.push({ name: providerName(p.provider), why: p.message ?? p.status });
+  }
+  for (const n of quota?.notes ?? []) {
+    if (/quota-axi not installed/.test(n)) missing.push({ name: "Cursor, Copilot…", why: n });
+  }
+  return { shown, missing };
 }
 
 /** Last path segment, for compact file lists. */

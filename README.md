@@ -60,10 +60,16 @@ How it works:
 - Mods can't use Node, so the mod only draws. It runs the bundled CLI with
   Herdr's `exec`: context every 15 s (`--list --json --recent 48`), subscriptions
   every 2 min (`quota --json`; the refresh button adds `--refresh`).
-- The pane ↔ session match is by folder: the newest Claude Code session whose
-  folder is the focused terminal's (or contains it / sits inside it). With the
-  panel itself focused, it describes the tab's last focused terminal. Context is
-  Claude Code only for now; other agents' panes say so.
+- The pane ↔ session match is by folder: when the focused terminal runs Claude
+  Code, the newest session whose folder is its own (or contains it / sits inside
+  it). With the panel itself focused, it describes the tab's last focused
+  terminal. A pane without an agent borrows nothing; the panel lists the space's
+  Claude agents instead (click one to go to it), as it also does whenever a space
+  has several. Context is Claude Code only for now; other agents' panes say so.
+- Layout: the agent's card (occupancy, bar, a mini chart of the last 48 requests),
+  makeup as one stacked bar with a legend, recent files, then one card per
+  subscription with numbers; providers that aren't set up fold into one line
+  (details in its tooltip).
 - During `herdr-app check` the mod draws built-in sample data (panel and chip)
   instead of running the CLI, so the check renders every part.
 

@@ -2,12 +2,15 @@
 // of each subscription is left. Drawing only; the numbers come from the
 // herdr-context CLI bundled next to this file (cli/), run through exec().
 //
-// props: { view: "chip" } draws a one-line status-bar chip instead of the panel.
+// props: { view: "chip" } draws the one-line status-bar chip instead of the panel.
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { exec, appHome, readTextFile, theme, focused, panes, props, checking, layout, run, shared, setShared } from "herdr";
-import { choosePane, pickSession, fmt, pctText, sparkline, resetsIn, ago, level, worstWindow, makeup, chipText, baseName, errorLine, panelState, toggleCommands } from "./logic.js";
-import { SAMPLE_SESSIONS, SAMPLE_QUOTA } from "./sample.js";
+import { exec, appHome, home, readTextFile, theme, focused, panes, agents, spaces, props, checking, layout, run, shared, setShared } from "herdr";
+import {
+  choosePane, pickSession, fmt, pctText, resetsIn, ago, level, worstWindow, errorLine, panelState, toggleCommands,
+  makeupParts, displayPath, trendBars, spaceAgents, splitProviders, providerName, baseName,
+} from "./logic.js";
+import { SAMPLE_SESSIONS, SAMPLE_QUOTA, SAMPLE_AGENTS } from "./sample.js";
 
 const CONTEXT_EVERY_MS = 15_000;
 const QUOTA_EVERY_MS = 120_000;
@@ -27,7 +30,7 @@ export default class HerdrContext extends View {
     this.preview = false;
     if (checking()) {
       // `herdr-app check`: don't start the CLI; draw sample data so the check
-      // renders every part of the panel.
+      // renders every part (panel, agents list, chip).
       this.preview = true;
       this.sessions = SAMPLE_SESSIONS;
       this.quota = SAMPLE_QUOTA;
@@ -45,6 +48,8 @@ export default class HerdrContext extends View {
     cx.timer.every(CONTEXT_EVERY_MS, (cx) => this.refreshContext(cx));
     cx.timer.every(QUOTA_EVERY_MS, (cx) => this.refreshQuota(cx, false));
   }
+
+  // ---------- data ----------
 
   /** Runs the bundled CLI and parses its JSON. */
   async cli(args) {
@@ -95,11 +100,21 @@ export default class HerdrContext extends View {
     });
   }
 
+  /** The terminal described, its Claude session (only when an agent runs there), and the space's agents. */
   current() {
-    if (this.preview) return { pane: null, cwd: this.sessions[0].cwd, session: this.sessions[0] };
-    const target = choosePane(focused(), panes(), this.lastPane);
+    if (this.preview) {
+      return { pane: { app: "claude-code" }, cwd: this.sessions[0].cwd, session: this.sessions[0], agents: SAMPLE_AGENTS.map((a) => ({ ...a, session: this.sessions[0] })) };
+    }
+    const f = focused();
+    const target = choosePane(f, panes(), this.lastPane);
     if (target.pane) this.lastPane = target.pane;
-    return { pane: target, cwd: target.cwd, session: pickSession(this.sessions ?? [], target.cwd) };
+    const sessions = this.sessions ?? [];
+    // Only a pane running Claude gets a session: a plain shell in a parent
+    // folder must not borrow a sub-folder's agent.
+    const isClaude = /claude/i.test(target.app ?? "");
+    const session = isClaude ? pickSession(sessions, target.cwd) : null;
+    const space = f?.space ?? spaces().find((s) => s.active)?.id ?? null;
+    return { pane: target, cwd: target.cwd, session, agents: spaceAgents(agents(), panes(), sessions, space) };
   }
 
   // ---------- pieces ----------
@@ -109,165 +124,231 @@ export default class HerdrContext extends View {
     return l === "high" ? t.blocked : l === "warn" ? t.working : t.accent;
   }
 
-  bar(t, fraction, color, width = 96) {
-    const p = Math.max(0, Math.min(100, Math.round((fraction ?? 0) * 100)));
-    return h_flex().w(width).h(4).rounded(2).bg(t.border).overflow_hidden().flex_none()
-      .child(div().h_full().w(`${p}%`).bg(color));
+  valueColor(t, usedPercent) {
+    const l = level(usedPercent);
+    return l === "high" ? t.blocked : l === "warn" ? t.working : t.foreground;
   }
 
-  title(t, text, extra) {
-    return h_flex().gap(8).items_center()
-      .child(div().text_size(11).font_semibold().text_color(t.muted).child(text.toUpperCase()))
-      .when(Boolean(extra), (el) => el.child(div().flex_1().truncate().text_size(11).text_color(t.dim).child(extra)));
+  bar(t, fraction, color, h = 4) {
+    const p = Math.max(0, Math.min(100, (fraction ?? 0) * 100));
+    return div().w_full().h(h).rounded(h / 2).bg(t.border).overflow_hidden()
+      .child(div().h_full().w(`${p}%`).rounded(h / 2).bg(color));
   }
 
-  dim(t, text) {
-    return div().text_color(t.dim).child(text);
+  label(t, text, aside) {
+    return h_flex().items_center()
+      .child(div().flex_1().text_size(10.5).font_semibold().text_color(t.dim).child(text.toUpperCase()))
+      .when(Boolean(aside), (el) => el.child(div().text_size(10.5).text_color(t.dim).child(aside)));
+  }
+
+  section(t, title, ...children) {
+    return this.sectionAside(t, title, null, ...children);
+  }
+
+  sectionAside(t, title, aside, ...children) {
+    return v_flex().gap(8).child(this.label(t, title, aside)).children(children.filter(Boolean));
+  }
+
+  iconButton(t, id, glyph, tip, onClick) {
+    return div().id(id).w(22).h(22).flex().items_center().justify_center().rounded(5).cursor_pointer()
+      .text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .tooltip(tip).on_click(onClick).child(glyph);
   }
 
   toggle() {
     for (const [cmd, args] of toggleCommands(panelState(layout()))) run(cmd, args);
   }
 
-  iconButton(t, id, label, tip, onClick) {
-    return div().id(id).px(6).py(2).rounded(4).cursor_pointer().text_color(t.muted)
-      .hover((s) => s.bg(t.hover).text_color(t.foreground))
-      .tooltip(tip).on_click(onClick).child(label);
-  }
-
   header(t) {
     const busy = this.loading || this.quotaLoading;
-    const inSidebar = panelState(layout()).open;
-    return h_flex().gap(4).items_center()
-      .child(div().flex_1().font_semibold().text_color(t.foreground).child("Context"))
-      .child(div().text_size(11).text_color(t.dim).pr(4).child(busy ? "updating…" : `updated ${ago(this.at)}`))
+    const open = panelState(layout()).open;
+    return h_flex().h(28).gap(2).items_center()
+      .child(div().flex_1().text_size(13).font_semibold().text_color(t.foreground).child("Context"))
+      .child(div().text_size(11).text_color(t.dim).pr(4).child(busy ? "updating…" : ago(this.at)))
       .child(this.iconButton(t, "hc-refresh", "↻", "Refresh now (also re-asks every subscription)",
         (_e, cx) => { this.refreshContext(cx); this.refreshQuota(cx, true); }))
-      .when(inSidebar, (el) => el.child(this.iconButton(t, "hc-close", "×", "Close (or click the chip in the status bar)", () => this.toggle())));
+      .when(open, (el) => el.child(this.iconButton(t, "hc-close", "✕", "Close (or click the chip in the status bar)", () => this.toggle())));
   }
 
-  contextSection(t) {
-    const { pane, cwd, session } = this.current();
-    const box = v_flex().gap(6);
-    if (this.error && !this.sessions) return box.child(this.title(t, "This pane")).child(div().text_color(t.blocked).child(this.error));
-    if (!session) {
-      const app = pane?.app ?? null;
-      const why = !cwd ? "No terminal in this tab."
-        : app && !/claude/i.test(app) ? `${app}: context view supports Claude Code for now.`
-        : this.sessions == null ? "Loading…" : "No recent Claude Code session in this folder.";
-      return box.child(this.title(t, "This pane", cwd ? baseName(cwd) : null)).child(this.dim(t, why));
-    }
+  // ---------- the focused agent ----------
+
+  focusCard(t, session, cwd) {
     const c = session.context ?? {};
-    box.child(this.title(t, "This pane", [session.model, session.gitBranch].filter(Boolean).join(" · ")));
+    const pct = c.percent != null ? c.percent * 100 : null;
+    const where = [session.model, session.gitBranch && session.gitBranch !== "HEAD" ? session.gitBranch : null].filter(Boolean).join(" · ");
+    const card = v_flex().gap(10).p(12).rounded(10).bg(t.surface).border(1).border_color(t.border)
+      .child(h_flex().gap(6).items_center()
+        .child(div().text_size(12.5).font_semibold().text_color(t.foreground).truncate().child(baseName(session.cwd ?? cwd) || "—"))
+        .child(div().flex_1().text_size(11).text_color(t.dim).truncate().child(where)))
+      .child(h_flex().gap(8).items_end()
+        .child(div().text_size(26).font_semibold().text_color(pct != null ? this.valueColor(t, pct) : t.foreground)
+          .child(pct != null ? pctText(c.percent) : fmt(c.tokens)))
+        .child(div().pb(4).text_size(11.5).text_color(t.muted)
+          .child(c.window ? `${fmt(c.tokens)} of ${fmt(c.window)} tokens` : "tokens in context")));
+    if (pct != null) card.child(this.bar(t, c.percent, this.color(t, pct), 6));
+    else card.child(div().text_size(11).text_color(t.dim).child("Add the statusLine collector to see the % (README)."));
 
-    // occupancy
-    const used = c.percent != null ? c.percent * 100 : null;
-    box.child(h_flex().gap(8).items_center()
-      .child(div().text_size(18).font_semibold().text_color(t.foreground).child(c.percent != null ? pctText(c.percent) : fmt(c.tokens)))
-      .child(div().text_color(t.muted).child(c.window ? `${fmt(c.tokens)} / ${fmt(c.window)} tokens` : "tokens in context")));
-    if (c.percent != null) box.child(this.bar(t, c.percent, this.color(t, used), 220));
-    else box.child(this.dim(t, "Window size unknown: add the statusLine collector (see README)."));
-
-    if (session.trend?.length > 1) {
-      box.child(h_flex().gap(8).items_center()
-        .child(div().text_color(t.accent).child(sparkline(session.trend)))
-        .child(div().text_size(11).text_color(t.dim).child(`${session.requestCount} requests`)));
+    const bars = trendBars(session.trend, 48);
+    if (bars.length > 1) {
+      card.child(h_flex().h(28).gap(1).items_end().children(bars.map((h, i) =>
+        div().flex_1().h(h).rounded(1).bg(i === bars.length - 1 ? t.accent : t.border))));
     }
-
-    // makeup
-    const parts = makeup(session);
-    if (parts.length) {
-      box.child(this.title(t, "Makeup", "estimated split"));
-      for (const p of parts.slice(0, 7)) {
-        box.child(h_flex().gap(8).items_center()
-          .child(div().w(110).truncate().text_color(t.muted).child(p.label))
-          .child(this.bar(t, p.share, t.accent, 80))
-          .child(div().w(40).text_color(t.muted).child(pctText(p.share)))
-          .child(div().text_size(11).text_color(t.dim).child(fmt(p.tokens))));
-      }
-      const heavy = session.composition?.topTools?.slice(0, 3) ?? [];
-      if (heavy.length) box.child(div().text_size(11).text_color(t.dim).truncate().child(`heaviest tools: ${heavy.map((x) => `${x.name} ${fmt(x.tokens)}`).join(", ")}`));
-    }
-
-    // compactions, cost
     const k = session.compactions ?? [];
     const facts = [
-      k.length ? `compacted ${k.length}× (last ${fmt(k[k.length - 1].preTokens)}→${fmt(k[k.length - 1].postTokens)})` : "never compacted",
-      session.totals?.cacheHitRate != null ? `cache hit ${pctText(session.totals.cacheHitRate)}` : null,
+      `${session.requestCount} requests`,
+      session.totals?.cacheHitRate != null ? `cache ${pctText(session.totals.cacheHitRate)}` : null,
+      k.length ? `compacted ${k.length}×` : "never compacted",
       session.cost?.totalUSD != null ? `$${session.cost.totalUSD.toFixed(2)}` : null,
     ].filter(Boolean);
-    box.child(div().text_size(11).text_color(t.dim).child(facts.join(" · ")));
-
-    // files
-    const files = (session.files ?? []).slice(0, 5);
-    if (files.length) {
-      box.child(this.title(t, "Files"));
-      for (const f of files) {
-        const n = f.edit + f.write;
-        box.child(h_flex().gap(8).items_center()
-          .child(div().flex_1().truncate().text_color(n ? t.foreground : t.muted).child(f.path))
-          .child(div().text_size(11).text_color(t.dim).child(n ? `✎${n}` : `read ${f.read}`)));
-      }
-    }
-    return box;
+    card.child(div().text_size(11).text_color(t.dim).truncate().child(facts.join("  ·  ")));
+    return card;
   }
 
-  quotaSection(t) {
-    const box = v_flex().gap(6).child(this.title(t, "Subscriptions", this.quotaAt ? ago(this.quotaAt) : null));
-    if (this.quotaError && !this.quota) return box.child(div().text_color(t.blocked).child(this.quotaError));
-    if (!this.quota) return box.child(this.dim(t, "Loading…"));
-    for (const p of this.quota.providers ?? []) {
-      const ok = p.status === "ok" || p.status === "stale";
-      box.child(h_flex().gap(8).items_center().pt(2)
-        .child(div().font_semibold().text_color(ok ? t.foreground : t.muted).child(p.provider))
-        .when(Boolean(p.plan), (el) => el.child(div().text_size(11).text_color(t.dim).child(p.plan)))
-        .child(div().flex_1())
-        .child(div().text_size(10.5).text_color(t.dim).truncate().child(ok ? `${p.status === "stale" ? "stale · " : ""}${p.source}` : "")));
-      if (!ok || !p.windows?.length) {
-        box.child(div().text_size(11).text_color(t.dim).child(p.message ?? "no data"));
-        continue;
-      }
-      for (const w of p.windows) {
-        const when = w.id === "bonus" ? resetsIn(w.resetsAt).replace(/^in /, "expires in ") : w.resetsAt ? `resets ${resetsIn(w.resetsAt)}` : (w.detail ?? "");
-        box.child(h_flex().gap(8).items_center()
-          .child(div().w(64).truncate().text_color(t.muted).child(w.label))
-          .child(this.bar(t, w.usedPercent / 100, this.color(t, w.usedPercent), 80))
-          .child(div().w(40).text_color(this.color(t, w.usedPercent)).child(`${Math.round(w.usedPercent)}%`))
-          .child(div().flex_1().truncate().text_size(10.5).text_color(t.dim).child(when)));
-      }
+  makeupSection(t, session) {
+    const parts = makeupParts(session);
+    if (!parts.length) return null;
+    const stacked = h_flex().w_full().h(8).rounded(4).overflow_hidden().gap(1)
+      .children(parts.map((p) => div().h_full().w(`${p.share * 100}%`).bg(t[p.color] ?? t.accent)));
+    const item = (p) => h_flex().flex_1().gap(6).items_center()
+      .child(div().w(8).h(8).rounded(2).bg(t[p.color] ?? t.accent))
+      .child(div().flex_1().text_size(11.5).text_color(t.muted).truncate().child(p.label))
+      .child(div().text_size(11.5).text_color(t.foreground).child(pctText(p.share)));
+    const top = parts.slice(0, 6);
+    const rows = [];
+    for (let i = 0; i < top.length; i += 2) {
+      rows.push(h_flex().gap(14).child(item(top[i])).child(top[i + 1] ? item(top[i + 1]) : div().flex_1()));
     }
-    for (const n of this.quota.notes ?? []) box.child(div().text_size(10.5).text_color(t.dim).child(n));
-    return box;
+    const heavy = session.composition?.topTools?.slice(0, 3) ?? [];
+    return this.section(t, "Makeup", stacked, v_flex().gap(5).children(rows),
+      heavy.length ? div().text_size(10.5).text_color(t.dim).truncate().child(`heaviest tools  ${heavy.map((x) => `${x.name} ${fmt(x.tokens)}`).join(" · ")}`) : null);
+  }
+
+  filesSection(t, session) {
+    const files = (session.files ?? []).slice(0, 5);
+    if (!files.length) return null;
+    return this.section(t, "Files", v_flex().gap(4).children(files.map((f) => {
+      const d = displayPath(f.path, session.cwd, home());
+      const n = f.edit + f.write;
+      return h_flex().gap(6).items_center()
+        .child(div().text_size(12).text_color(n ? t.foreground : t.muted).child(d.name))
+        .child(div().flex_1().text_size(11).text_color(t.dim).truncate().child(d.dir))
+        .child(div().text_size(10.5).text_color(n ? t.muted : t.dim).child(n ? `✎ ${n}` : "read"));
+    })));
+  }
+
+  agentsSection(t, list, focusedCwd) {
+    if (!list.length) return null;
+    return this.section(t, "Agents in this space", v_flex().gap(2).children(list.map((a, i) => {
+      const c = a.session?.context ?? {};
+      const pct = c.percent != null ? c.percent * 100 : null;
+      const here = a.cwd && a.cwd === focusedCwd;
+      return h_flex().id(`hc-agent-${i}`).gap(8).px(8).py(6).rounded(6).items_center().cursor_pointer()
+        .when(here, (el) => el.bg(t.selected))
+        .hover((s) => s.bg(t.hover))
+        .tooltip(a.cwd ?? "")
+        .on_click(() => { if (!this.preview) run("agent.focus", { terminal: a.address }); })
+        .child(div().w(6).h(6).rounded_full().bg(t[a.status] ?? t.idle))
+        .child(div().flex_1().text_size(12).text_color(t.foreground).truncate().child(a.title))
+        .child(div().w(56).child(this.bar(t, c.percent ?? 0, pct != null ? this.color(t, pct) : t.dim, 4)))
+        .child(div().w(38).text_size(11).text_color(pct != null ? this.valueColor(t, pct) : t.muted)
+          .child(c.tokens == null ? "—" : pct != null ? pctText(c.percent) : fmt(c.tokens)));
+    })));
+  }
+
+  contextPart(t) {
+    const { pane, cwd, session, agents: list } = this.current();
+    if (this.error && !this.sessions) return div().text_color(t.blocked).text_size(12).child(this.error);
+    const out = [];
+    if (session) {
+      out.push(this.focusCard(t, session, cwd));
+    } else {
+      const why = this.sessions == null ? "Loading…"
+        : !cwd ? "No terminal in this tab."
+        : pane?.app ? `${pane.app}: the context view supports Claude Code for now.`
+        : list.length ? "No agent in this pane. Pick one below." : "No agent in this pane.";
+      out.push(v_flex().p(12).rounded(10).border(1).border_color(t.border)
+        .child(div().text_size(12).text_color(t.muted).child(why)));
+    }
+    // the space's agents: when this pane has none, or when there are several to compare
+    if (list.length && (!session || list.length > 1)) out.push(this.agentsSection(t, list, cwd));
+    if (session) {
+      out.push(this.makeupSection(t, session));
+      out.push(this.filesSection(t, session));
+    }
+    return v_flex().gap(18).children(out.filter(Boolean));
+  }
+
+  // ---------- subscriptions ----------
+
+  providerCard(t, p) {
+    const head = h_flex().gap(6).items_center()
+      .child(div().text_size(12.5).font_semibold().text_color(t.foreground).child(providerName(p.provider)))
+      .when(Boolean(p.plan), (el) => el.child(div().px(5).py(1).rounded(4).bg(t.raised).text_size(10).text_color(t.muted).child(String(p.plan))))
+      .child(div().flex_1())
+      .when(p.status === "stale", (el) => el.child(div().text_size(10.5).text_color(t.dim).child("stale")));
+    const rows = p.windows.map((w) => {
+      const when = w.id === "bonus" ? resetsIn(w.resetsAt).replace(/^in /, "ends in ") : w.resetsAt ? resetsIn(w.resetsAt) : (w.detail ?? "").replace(/^resets /, "");
+      return h_flex().gap(8).items_center()
+        .child(div().w(44).text_size(11.5).text_color(t.muted).truncate().child(w.label))
+        .child(div().flex_1().child(this.bar(t, w.usedPercent / 100, this.color(t, w.usedPercent), 5)))
+        .child(div().w(36).text_size(12).font_semibold().text_color(this.valueColor(t, w.usedPercent)).child(`${Math.round(w.usedPercent)}%`))
+        .child(div().w(64).text_size(10.5).text_color(t.dim).truncate().child(when));
+    });
+    return v_flex().gap(7).p(10).rounded(8).bg(t.surface).border(1).border_color(t.border)
+      .tooltip(`via ${p.source}${p.observedAt ? ` · as of ${p.observedAt.replace("T", " ").slice(0, 16)}` : ""}`)
+      .child(head).children(rows);
+  }
+
+  quotaPart(t) {
+    if (this.quotaError && !this.quota) return this.section(t, "Subscriptions", div().text_size(12).text_color(t.blocked).child(this.quotaError));
+    if (!this.quota) return this.section(t, "Subscriptions", div().text_size(12).text_color(t.dim).child("Loading…"));
+    const { shown, missing } = splitProviders(this.quota);
+    const out = shown.map((p) => this.providerCard(t, p));
+    if (missing.length) {
+      out.push(h_flex().id("hc-missing").gap(6).items_center()
+        .tooltip(missing.map((m) => `${m.name}: ${m.why}`).join("\n"))
+        .child(div().text_size(11).text_color(t.dim).truncate()
+          .child(`Not set up: ${missing.map((m) => m.name).join(", ")}`))
+        .child(div().text_size(11).text_color(t.dim).child("ⓘ")));
+    }
+    return this.sectionAside(t, "Subscriptions", this.quotaAt ? ago(this.quotaAt) : null, ...out);
   }
 
   // ---------- views ----------
 
   renderChip(t) {
     const { session } = this.current();
-    const w = worstWindow(this.quota);
-    const color = w ? this.color(t, w.window.usedPercent) : t.muted;
     const state = panelState(layout());
+    const w = worstWindow(this.quota);
+    const c = session?.context;
     const tip = this.error ?? this.quotaError ??
-      (state.inSidebar ? `${state.open ? "Hide" : "Show"} context details` : "Context of the focused pane · fullest subscription window");
-    return h_flex().size_full().px(8).items_center().justify_end().bg(t.chrome).border_t(1).border_color(t.border).text_size(11.8)
-      .child(h_flex().id("hc-chip").px(8).h(20).gap(6).items_center().rounded(4).cursor_pointer()
-        .when(state.open, (el) => el.bg(t.selected))
-        .hover((s) => s.bg(t.hover))
-        .tooltip(tip)
-        .on_click(() => this.toggle())
-        .child(div().text_color(color).child(chipText(session, this.quota)))
-        .when(state.inSidebar, (el) => el.child(div().text_color(t.dim).child(state.open ? "▸" : "◂"))));
+      (state.inSidebar ? `${state.open ? "Hide" : "Show"} context details` : "Context of the focused agent · fullest subscription window");
+    const part = (labelText, value, color) => h_flex().gap(4).items_center()
+      .child(div().text_color(t.dim).child(labelText))
+      .child(div().text_color(color).child(value));
+    const chip = h_flex().id("hc-chip").h(20).px(8).gap(10).items_center().rounded(5).cursor_pointer()
+      .when(state.open, (el) => el.bg(t.hover))
+      .hover((s) => s.bg(t.hover))
+      .tooltip(tip)
+      .on_click(() => this.toggle());
+    if (c?.tokens != null) {
+      const pct = c.percent != null ? c.percent * 100 : null;
+      chip.child(part("ctx", pct != null ? pctText(c.percent) : fmt(c.tokens), pct != null ? this.valueColor(t, pct) : t.muted));
+    }
+    if (w) chip.child(part(`${w.provider} ${w.window.label}`, `${Math.round(w.window.usedPercent)}%`, this.valueColor(t, w.window.usedPercent)));
+    if (c?.tokens == null && !w) chip.child(div().text_color(t.dim).child("context"));
+    return h_flex().size_full().px(6).items_center().justify_end().bg(t.chrome).border_t(1).border_color(t.border).text_size(11.8)
+      .child(chip);
   }
 
   render() {
     const t = theme();
     if (props()?.view === "chip") return this.renderChip(t);
-    return v_flex().id("hc-root").size_full().bg(t.chrome).p(12).gap(14).text_size(12).text_color(t.foreground)
+    return v_flex().id("hc-root").size_full().bg(t.chrome).px(14).pt(10).pb(14).gap(18).text_color(t.foreground)
       .overflow_y_scrollbar()
       .child(this.header(t))
-      .child(this.contextSection(t))
-      .child(div().h(1).bg(t.border))
-      .child(this.quotaSection(t))
+      .child(this.contextPart(t))
+      .child(this.quotaPart(t))
       // `herdr-app check` renders the default view only: draw the chip too so it gets checked
       .when(this.preview, (el) => el.child(div().h(28).child(this.renderChip(t))));
   }
