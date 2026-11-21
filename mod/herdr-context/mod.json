@@ -1,0 +1,8 @@
+{
+  "name": "herdr-context",
+  "version": "0.1.0",
+  "title": "Context",
+  "description": "What is in the focused agent's context window, and how much of each subscription is left",
+  "place": "right",
+  "size": 340
+}

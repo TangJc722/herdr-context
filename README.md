@@ -24,6 +24,45 @@ claude · 1dea6540 · ~/work/api (main) · claude-opus-5-5 · v2.1.330
   Subagents a6428b59 (2 req, peak 6.0k)
 ```
 
+## Herdr mod
+
+A panel for the [Herdr app](https://herdr.dev/app) (checked against Herdr 0.1.16):
+the focused pane's context (occupancy, trend, makeup, compactions, files) and
+every subscription's usage, refreshed on its own.
+
+```sh
+git clone https://github.com/TangJc722/herdr-context && cd herdr-context
+node bin/install-mod.js                                   # copies the mod + CLI into ~/.config/herdr-app/mods/herdr-context
+herdr-app check ~/.config/herdr-app/mods/herdr-context    # Herdr's own check
+```
+
+Herdr docks the panel on the right the first time it sees the mod. Re-run
+`install-mod.js` to update; `node bin/install-mod.js --uninstall` removes it.
+Set up the statusLine collector too (the installer prints the exact line), or
+the panel shows token counts without a percentage.
+
+How it works:
+- Mods can't use Node, so the mod only draws. It runs the bundled CLI with
+  Herdr's `exec`: context every 15 s (`--list --json --recent 48`), subscriptions
+  every 2 min (`quota --json`; the refresh button adds `--refresh`).
+- The pane ↔ session match is by folder: the newest Claude Code session whose
+  folder is the focused pane's (or contains it / sits inside it). Context is
+  Claude Code only for now; other agents' panes say so.
+- During `herdr-app check` the mod draws built-in sample data instead of running
+  the CLI, so the check renders every part of the panel.
+
+Optional status-bar chip (`ctx 62% · codex week 81%`): clone the main layout
+(`herdr-app do layout.clone '{"name":"main","as":"my-main"}'`) and in
+`layouts/my-main.json` turn the `status` block into a row with the chip beside
+Herdr's status bar:
+
+```json
+{ "id": "status", "type": "row", "size": { "px": 28 }, "children": [
+  { "id": "status-main", "type": "block", "content": { "mod": "workspace-status" } },
+  { "id": "status-context", "type": "block", "size": { "px": 260 }, "content": { "mod": "herdr-context", "props": { "view": "chip" } } }
+] }
+```
+
 ## Usage
 
 Requires Node 18+. No dependencies.
@@ -148,8 +187,10 @@ src/claude/discover.js     finds session logs
 src/quota/                 subscription usage: claude (statusLine), claude-cli (/usage), claude-direct,
                            codex (logs), codex-rpc (app-server), kiro, quota-axi, index (source order)
 src/render.js              text output
-bin/                       CLI and statusLine collector
-test/                      node --test, synthetic fixtures; a fake codex app-server script.
+bin/                       CLI, statusLine collector, install-mod.js (Herdr mod installer)
+mod/herdr-context/         the Herdr mod: main.js (drawing), logic.js (pure, tested), sample.js (check data)
+test/                      node --test, synthetic fixtures; a fake codex app-server script;
+                           main.js run against stand-ins for Herdr's modules.
                            Tests never start the real claude or codex.
 ```
 
@@ -160,7 +201,8 @@ test/                      node --test, synthetic fixtures; a fake codex app-ser
 1. **Codex adapter**: `~/.codex/sessions/**` rollout events: `token_count`
    (`info.last_token_usage`, `model_context_window`, `rate_limits.primary/secondary`)
    and `context_compacted`. Needs a real sample to confirm.
-2. **Herdr mod**: status-bar chip (context % of the focused pane) + side panel; map sessions to panes by cwd / process.
+2. **Herdr mod**: panel + status-bar chip done (match by folder). Next: try it in a live window,
+   Codex context in the panel, an incremental reader so polling never re-parses whole logs.
 3. **Quota**: done (Claude statusLine / `/usage` / direct, Codex logs / app-server, Kiro, quota-axi).
    Next: verify Claude `/usage` text and Kiro against live reports; Cursor without quota-axi.
 4. Cursor context: research what its CLI leaves on disk.

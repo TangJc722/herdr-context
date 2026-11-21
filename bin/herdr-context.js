@@ -2,7 +2,7 @@
 // herdr-context: context windows and subscription usage of your coding agents.
 //
 //   herdr-context                 latest Claude Code session's context
-//   herdr-context --list          recent sessions, one line each
+//   herdr-context --list          recent sessions, one line each (--limit N, --recent <hours>)
 //   herdr-context --session <id>  a session by id (prefix is enough)
 //   herdr-context --cwd <dir>     latest session started in <dir>
 //   herdr-context quota           subscription usage: Claude, Codex, Kiro (+ quota-axi providers)
@@ -25,6 +25,7 @@ const { values: a, positionals } = parseArgs({
     cwd: { type: 'string' },
     list: { type: 'boolean', short: 'l' },
     limit: { type: 'string', default: '10' },
+    recent: { type: 'string' },
     json: { type: 'boolean' },
     dir: { type: 'string' },
     refresh: { type: 'boolean' },
@@ -59,6 +60,15 @@ if (positionals.length) {
 
 const dir = a.dir || claudeProjectsDir();
 let entries = listClaudeSessions(dir);
+if (a.recent) {
+  // only sessions written to in the last N hours (keeps frequent polling cheap)
+  const since = Date.now() - Number(a.recent) * 3600e3;
+  entries = entries.filter((e) => e.mtimeMs >= since);
+  if (!entries.length && a.list) {
+    console.log(a.json ? '[]' : 'no recent sessions');
+    process.exit(0);
+  }
+}
 if (!entries.length) {
   console.error(`no Claude Code session logs found under ${dir}`);
   process.exit(1);

@@ -25,6 +25,39 @@ claude · 1dea6540 · ~/work/api (main) · claude-opus-5-5 · v2.1.330
 
 （命令行输出目前只有英文。）
 
+## Herdr mod
+
+一个给 [Herdr 桌面版](https://herdr.dev/app) 用的侧边面板（已在 Herdr 0.1.16 上检查通过）：
+显示当前窗格的上下文（占用、趋势、组成、压缩事件、文件），以及每个订阅的用量，会自动刷新。
+
+```sh
+git clone https://github.com/TangJc722/herdr-context && cd herdr-context
+node bin/install-mod.js                                   # 把 mod 和命令行工具复制到 ~/.config/herdr-app/mods/herdr-context
+herdr-app check ~/.config/herdr-app/mods/herdr-context    # Herdr 官方检查
+```
+
+Herdr 第一次发现这个 mod 时，会自动把面板放在窗口右侧。更新时重新运行 `install-mod.js` 即可；
+`node bin/install-mod.js --uninstall` 可以卸载。
+同时建议配置 statusLine 采集器（安装脚本会打印出完整的配置行），否则面板只显示 token 数量，不显示百分比。
+
+工作原理：
+- mod 不能使用 Node，所以它只负责显示。数据通过 Herdr 的 `exec` 运行打包在一起的命令行工具获取：
+  上下文每 15 秒刷新一次（`--list --json --recent 48`），订阅用量每 2 分钟刷新一次（`quota --json`；点刷新按钮时会加上 `--refresh`）。
+- 窗格和会话按文件夹匹配：取工作目录与当前窗格相同（或包含它、或在它里面）的最新一个 Claude Code 会话。
+  上下文目前只支持 Claude Code，其他 agent 的窗格会显示说明。
+- 运行 `herdr-app check` 时，mod 不会运行命令行工具，而是显示内置的示例数据，这样检查能覆盖面板的每个部分。
+
+可选的状态栏小标签（`ctx 62% · codex week 81%`）：先复制一份主布局
+（`herdr-app do layout.clone '{"name":"main","as":"my-main"}'`），然后在
+`layouts/my-main.json` 里把 `status` 区块改成一行，让小标签显示在 Herdr 自带状态栏的旁边：
+
+```json
+{ "id": "status", "type": "row", "size": { "px": 28 }, "children": [
+  { "id": "status-main", "type": "block", "content": { "mod": "workspace-status" } },
+  { "id": "status-context", "type": "block", "size": { "px": 260 }, "content": { "mod": "herdr-context", "props": { "view": "chip" } } }
+] }
+```
+
 ## 使用方法
 
 需要 Node 18 及以上版本，没有任何依赖。
@@ -143,8 +176,10 @@ src/claude/discover.js     查找会话日志
 src/quota/                 订阅用量：claude（statusLine）、claude-cli（/usage）、claude-direct、
                            codex（日志）、codex-rpc（app-server）、kiro、quota-axi、index（数据源顺序）
 src/render.js              文本输出
-bin/                       命令行工具和 statusLine 采集器
-test/                      node --test 测试，使用合成的样本数据和一个模拟的 codex app-server 脚本。
+bin/                       命令行工具、statusLine 采集器、install-mod.js（Herdr mod 安装脚本）
+mod/herdr-context/         Herdr mod：main.js（界面）、logic.js（纯逻辑，有测试）、sample.js（检查用的示例数据）
+test/                      node --test 测试，使用合成的样本数据和一个模拟的 codex app-server 脚本；
+                           main.js 在模拟的 Herdr 模块上实际运行。
                            测试绝不会启动真实的 claude 或 codex。
 ```
 
@@ -155,7 +190,8 @@ test/                      node --test 测试，使用合成的样本数据和�
 1. **Codex 上下文分析**：读取 `~/.codex/sessions/**` 里的事件：`token_count`
    （`info.last_token_usage`、`model_context_window`、`rate_limits.primary/secondary`）
    和 `context_compacted`。需要一份真实样本来确认。
-2. **Herdr mod**：状态栏小标签（当前窗格的上下文占用百分比）+ 侧边面板；按工作目录或进程把会话对应到窗格。
+2. **Herdr mod**：侧边面板和状态栏小标签已完成（按文件夹匹配）。下一步：在真实窗口里试用；
+   面板支持 Codex 上下文；增量读取日志，避免每次轮询都重新解析整个日志。
 3. **订阅用量**：已完成（Claude 的 statusLine / `/usage` / 直连模式，Codex 的日志 / app-server，Kiro，quota-axi）。
    下一步：用真实输出验证 Claude `/usage` 文本和 Kiro；不依赖 quota-axi 支持 Cursor。
 4. Cursor 上下文分析：调研它的 CLI 在本地留下了哪些数据。

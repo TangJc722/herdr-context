@@ -1,14 +1,15 @@
 {
   "name": "herdr-context",
   "version": "0.1.0",
-  "description": "Context-window insight for coding agents (Claude Code first, Codex next), built to feed a Herdr mod.",
+  "description": "Context-window insight and subscription usage for coding agents, with a Herdr app mod.",
   "type": "module",
   "bin": {
     "herdr-context": "bin/herdr-context.js",
     "herdr-context-statusline": "bin/claude-statusline-collector.js"
   },
   "scripts": {
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "install-mod": "node bin/install-mod.js"
   },
   "engines": {
     "node": ">=18"
