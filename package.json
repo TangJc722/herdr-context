@@ -1,0 +1,17 @@
+{
+  "name": "herdr-context",
+  "version": "0.1.0",
+  "description": "Context-window insight for coding agents (Claude Code first, Codex next), built to feed a Herdr mod.",
+  "type": "module",
+  "bin": {
+    "herdr-context": "bin/herdr-context.js",
+    "herdr-context-statusline": "bin/claude-statusline-collector.js"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}
