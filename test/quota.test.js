@@ -205,11 +205,13 @@ test('quota-axi: windows mapped to % used; missing tool reported', () => {
 });
 
 // ---------- all together ----------
-test('collectQuotas: local sources first, quota-axi fills gaps and adds providers', () => {
+test('collectQuotas: local sources first, quota-axi fills gaps and adds providers', async () => {
   const sl = tmp();
   writeStatusline({ session_id: 's', rate_limits: { five_hour: { used_percentage: 40, resets_at: S(2) } } }, sl);
   const axiRun = fake({ 'quota-axi': { stdout: JSON.stringify(AXI) } });
-  const r = collectQuotas({
+  const r = await collectQuotas({
+    active: false, // never start real claude/codex in tests
+    env: { XDG_CACHE_HOME: tmp() },
     claude: { dir: sl, now: NOW },
     codex: { home: tmp(), now: NOW }, // no local Codex data
     kiro: { run: fake({ 'kiro-cli': { stdout: KIRO_FREE } }), env: { XDG_CACHE_HOME: tmp() }, now: NOW },
@@ -227,6 +229,6 @@ test('collectQuotas: local sources first, quota-axi fills gaps and adds provider
   assert.match(text, /cursor .*month .* 70% used/);
   assert.match(text, /kiro .*KIRO FREE/);
 
-  const noAxi = collectQuotas({ claude: { dir: sl, now: NOW }, codex: { home: tmp() }, kiro: { run: fake({}), env: { XDG_CACHE_HOME: tmp() } }, axi: false });
+  const noAxi = await collectQuotas({ active: false, env: { XDG_CACHE_HOME: tmp() }, claude: { dir: sl, now: NOW }, codex: { home: tmp() }, kiro: { run: fake({}), env: { XDG_CACHE_HOME: tmp() } }, axi: false });
   assert.deepEqual(noAxi.providers.map((p) => p.provider), ['claude', 'codex', 'kiro']);
 });

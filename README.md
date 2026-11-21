@@ -53,7 +53,15 @@ Without the collector, token counts are shown but no percentage (or set `HERDR_C
 
 ## Subscription usage: `herdr-context quota`
 
-Every subscription on this machine in one list (`--json` for the mod, `--refresh` to skip the Kiro cache, `--no-axi`):
+Every subscription on this machine in one list.
+
+```sh
+node bin/herdr-context.js quota            # default: local data, then the agents' own commands
+node bin/herdr-context.js quota --refresh  # ignore caches, ask every source now
+node bin/herdr-context.js quota --passive  # never start claude / codex; local data only
+node bin/herdr-context.js quota --direct   # Claude: use the local login directly (opt-in, see below)
+node bin/herdr-context.js quota --json     # for the Herdr mod; --no-axi skips quota-axi
+```
 
 ```
 Subscription usage
@@ -70,15 +78,42 @@ Subscription usage
           via quota-axi · as of 2026-11-21 14:35Z
 ```
 
-| Provider | Source | Credentials / network |
-|---|---|---|
-| Claude | statusLine payloads saved by the collector; highest reading of the current window across sessions | none |
-| Codex | last `token_count` event with `rate_limits` in `$CODEX_HOME/sessions/**/rollout-*.jsonl[.zst]` | none |
-| Kiro | `kiro-cli chat --no-interactive "/usage" --v2`, text parsed, cached 10 min | kiro-cli's own login |
-| Cursor, Copilot, Grok, … | [`quota-axi --json`](https://github.com/kunchenguid/quota-axi) when installed | quota-axi reads each CLI's login |
+Sources are tried cheapest first. Local data is used while it is under 5 minutes old;
+otherwise the agent's own command is asked (results cached):
 
-Local sources win; quota-axi stands in when one has nothing. Windows whose reset
-time has passed are dropped (shown as `stale`) rather than shown as current.
+| Provider | 1. Local, free | 2. Agent's own command | Credentials |
+|---|---|---|---|
+| Claude | statusLine readings from the collector (highest reading of the current window across sessions) | `claude -p "/usage"`, cached 5 min | Claude Code uses its own login |
+| Codex | last `token_count` event with `rate_limits` in `$CODEX_HOME/sessions/**/rollout-*.jsonl[.zst]` | `codex -s read-only -a never app-server` → JSON-RPC `account/rateLimits/read`, cached 3 min | Codex uses (and renews) its own login |
+| Kiro | — | `kiro-cli chat --no-interactive "/usage" --v2`, text parsed, cached 10 min | kiro-cli's own login |
+| Cursor, Copilot, Grok, … | — | [`quota-axi --json`](https://github.com/kunchenguid/quota-axi) when installed | quota-axi reads each CLI's login |
+
+If a source fails, the next one is tried and the reason is shown; quota-axi also
+stands in when a source above has nothing. Windows whose reset time has passed
+are dropped (shown as `stale`) rather than shown as current.
+
+The `claude /usage` probe runs with `--no-session-persistence --tools "" --strict-mcp-config`,
+hooks and Remote Control disabled, in an empty directory, so it writes no session
+log and starts no MCP servers. Its text parser follows CodexBar's description of
+the report and **has not yet been checked against a live Pro/Max report**.
+The Codex app-server exchange was checked against Codex CLI 0.171.0.
+
+### Claude direct mode (`--direct`, opt-in)
+
+Reads Claude Code's OAuth access token and asks Anthropic's usage endpoint
+(`GET https://api.anthropic.com/api/oauth/usage`), as CodexBar and quota-axi do:
+freshest data, one HTTP request, structured JSON. Also enabled by `HERDR_CONTEXT_CLAUDE_DIRECT=1`.
+
+- Token sources: `CLAUDE_CODE_OAUTH_TOKEN`, then `~/.claude/.credentials.json`
+  (`$CLAUDE_CONFIG_DIR`), then the macOS Keychain item `Claude Code-credentials` (macOS may ask once).
+- **Read-only**: Claude Code's credentials are never written or moved.
+- **Never refreshes**: an expired token is reported and the other sources are used,
+  so Claude Code renews its own login. Refreshing here could rotate the refresh token
+  out from under Claude Code and sign it out.
+- The token is sent only to `api.anthropic.com` and never printed or cached; only the usage numbers are cached (2 min).
+- The endpoint is not a documented public API and may change.
+
+Codex needs no direct mode: its app-server already answers with Codex's own login.
 
 Kiro caveats: no documented API, so a report-format change breaks parsing; each
 run starts a non-interactive chat and the CLI saves an empty session for it.
@@ -110,10 +145,12 @@ src/claude/session.js      folds log records into a summary (pure, no I/O)
 src/claude/load.js         one session + sub-agents + statusLine → snapshot
 src/claude/statusline.js   statusLine payload save / read / normalize
 src/claude/discover.js     finds session logs
-src/quota/                 subscription usage: claude, codex, kiro, quota-axi, index (merge)
+src/quota/                 subscription usage: claude (statusLine), claude-cli (/usage), claude-direct,
+                           codex (logs), codex-rpc (app-server), kiro, quota-axi, index (source order)
 src/render.js              text output
 bin/                       CLI and statusLine collector
-test/                      node --test, synthetic fixtures
+test/                      node --test, synthetic fixtures; a fake codex app-server script.
+                           Tests never start the real claude or codex.
 ```
 
 `npm test` runs the suite.
@@ -124,5 +161,6 @@ test/                      node --test, synthetic fixtures
    (`info.last_token_usage`, `model_context_window`, `rate_limits.primary/secondary`)
    and `context_compacted`. Needs a real sample to confirm.
 2. **Herdr mod**: status-bar chip (context % of the focused pane) + side panel; map sessions to panes by cwd / process.
-3. **Quota**: done (Claude, Codex, Kiro, quota-axi). Next: verify Kiro and Codex against live output; Cursor without quota-axi.
+3. **Quota**: done (Claude statusLine / `/usage` / direct, Codex logs / app-server, Kiro, quota-axi).
+   Next: verify Claude `/usage` text and Kiro against live reports; Cursor without quota-axi.
 4. Cursor context: research what its CLI leaves on disk.

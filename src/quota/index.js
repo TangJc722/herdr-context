@@ -1,17 +1,76 @@
 // All subscription usage on this machine in one list.
-// Local sources first (Claude statusLine, Codex logs, Kiro CLI); quota-axi
-// fills in every other provider and stands in when a local source has nothing.
+//
+// Per provider, cheapest source first:
+//   Claude: [direct OAuth, opt-in] → statusLine readings (if < 5 min old)
+//           → `claude -p /usage` (cached 5 min) → statusLine readings (older)
+//   Codex:  session logs (if < 5 min old) → `codex app-server` (cached 3 min)
+//           → session logs (older)
+//   Kiro:   `kiro-cli /usage` (cached 10 min)
+//   others: quota-axi, which also stands in when a source above has nothing.
+// `active: false` (CLI --passive) never starts claude/codex processes.
+// `refresh: true` skips freshness checks and caches.
 import { claudeQuota } from './claude.js';
+import { claudeDirectQuota } from './claude-direct.js';
+import { claudeCliQuota } from './claude-cli.js';
 import { codexQuota } from './codex.js';
+import { codexRpcQuota } from './codex-rpc.js';
 import { kiroQuota } from './kiro.js';
 import { quotaAxi } from './quota-axi.js';
+import { readCache, writeCache, isFresh } from './common.js';
 
 const GOOD = new Set(['ok', 'stale']);
+const FRESH_MS = 5 * 60 * 1000;
 
-export function collectQuotas(opts = {}) {
+function withNote(q, note) {
+  if (!note) return q;
+  return { ...q, message: [q.message, note].filter(Boolean).join(' · ') };
+}
+
+/** Cached run of an active probe; only successful results are cached. */
+async function cached(name, ttlMs, probe, { refresh, env, now }) {
+  if (!refresh) {
+    const c = readCache(name, ttlMs, { env, now });
+    if (c) return { ...c, source: `${c.source} (cached)` };
+  }
+  const q = await probe();
+  if (GOOD.has(q.status)) writeCache(name, q, { env, now });
+  return q;
+}
+
+export async function claudeBest(o = {}) {
+  const { refresh = false, active = true, direct = false, now = Date.now(), env = process.env } = o;
+  const notes = [];
+  if (direct) {
+    const d = await cached('claude-direct', 2 * 60 * 1000, () => claudeDirectQuota({ now, env, ...o.directOpts }), { refresh, env, now });
+    if (GOOD.has(d.status)) return d;
+    notes.push(`direct: ${d.message}`);
+  }
+  const local = claudeQuota({ now, ...o.statusline });
+  if (!refresh && isFresh(local, FRESH_MS, now)) return withNote(local, notes.join('; '));
+  if (active) {
+    const cli = await cached('claude-cli', 5 * 60 * 1000, () => claudeCliQuota({ now, env, ...o.cli }), { refresh, env, now });
+    if (GOOD.has(cli.status)) return withNote(cli, notes.join('; '));
+    notes.push(`/usage: ${cli.message}`);
+  }
+  return withNote(local, notes.join('; '));
+}
+
+export async function codexBest(o = {}) {
+  const { refresh = false, active = true, now = Date.now(), env = process.env } = o;
+  const local = codexQuota({ now, ...o.logs });
+  if (!active || (!refresh && isFresh(local, FRESH_MS, now))) return local;
+  const rpc = await cached('codex-rpc', 3 * 60 * 1000, () => codexRpcQuota({ now, env, ...o.rpc }), { refresh, env, now });
+  if (GOOD.has(rpc.status)) return rpc;
+  return GOOD.has(local.status) || rpc.status === 'not_found' && local.status === 'not_found'
+    ? withNote(local, `app-server: ${rpc.message}`)
+    : rpc;
+}
+
+export async function collectQuotas(opts = {}) {
+  const common = { refresh: opts.refresh, active: opts.active, now: opts.now, env: opts.env };
   const own = [
-    claudeQuota(opts.claude),
-    codexQuota(opts.codex),
+    await claudeBest({ ...common, direct: !!opts.direct, directOpts: opts.claudeDirect, statusline: opts.claude, cli: opts.claudeCli }),
+    await codexBest({ ...common, logs: opts.codex, rpc: opts.codexRpc }),
     kiroQuota({ refresh: opts.refresh, ...opts.kiro }),
   ];
   const notes = [];

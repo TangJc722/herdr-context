@@ -6,7 +6,10 @@
 //   herdr-context --session <id>  a session by id (prefix is enough)
 //   herdr-context --cwd <dir>     latest session started in <dir>
 //   herdr-context quota           subscription usage: Claude, Codex, Kiro (+ quota-axi providers)
-//     --refresh                   re-run kiro-cli instead of using its 10-minute cache
+//     --refresh                   ignore caches and freshness checks, ask every source now
+//     --passive                   never start claude / codex processes; local data only
+//     --direct                    Claude: read Claude Code's login (read-only) and ask the
+//                                 usage endpoint directly (also HERDR_CONTEXT_CLAUDE_DIRECT=1)
 //     --no-axi                    do not call quota-axi
 //   --json                        machine-readable output (for the Herdr mod)
 import { parseArgs } from 'node:util';
@@ -25,6 +28,8 @@ const { values: a, positionals } = parseArgs({
     json: { type: 'boolean' },
     dir: { type: 'string' },
     refresh: { type: 'boolean' },
+    passive: { type: 'boolean' },
+    direct: { type: 'boolean' },
     'no-axi': { type: 'boolean' },
     help: { type: 'boolean', short: 'h' },
   },
@@ -33,12 +38,17 @@ const { values: a, positionals } = parseArgs({
 if (a.help) {
   console.log(`usage:
   herdr-context [--list] [--session <id>] [--cwd <dir>] [--json] [--dir <claude projects dir>]
-  herdr-context quota [--refresh] [--no-axi] [--json]`);
+  herdr-context quota [--refresh] [--passive] [--direct] [--no-axi] [--json]`);
   process.exit(0);
 }
 
 if (positionals[0] === 'quota') {
-  const q = collectQuotas({ refresh: a.refresh, axi: !a['no-axi'] });
+  const q = await collectQuotas({
+    refresh: a.refresh,
+    active: !a.passive,
+    direct: a.direct || process.env.HERDR_CONTEXT_CLAUDE_DIRECT === '1',
+    axi: !a['no-axi'],
+  });
   console.log(a.json ? JSON.stringify(q, null, 2) : renderQuotas(q));
   process.exit(0);
 }

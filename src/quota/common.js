@@ -11,6 +11,36 @@
 //   message:  why not ok (not_found / error), or a caveat
 // }
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+export function quotaCacheDir(env = process.env) {
+  const base = env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache');
+  return path.join(base, 'herdr-context', 'quota');
+}
+
+/** A cached ProviderQuota younger than ttlMs, or null. */
+export function readCache(name, ttlMs, { env = process.env, now = Date.now() } = {}) {
+  try {
+    const c = JSON.parse(fs.readFileSync(path.join(quotaCacheDir(env), `${name}.json`), 'utf8'));
+    if (now - Date.parse(c.cachedAt) < ttlMs) return c.value;
+  } catch {}
+  return null;
+}
+
+export function writeCache(name, value, { env = process.env, now = Date.now() } = {}) {
+  try {
+    const dir = quotaCacheDir(env);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, `${name}.json`), JSON.stringify({ cachedAt: new Date(now).toISOString(), value }));
+  } catch {}
+}
+
+/** Data observed less than maxAgeMs ago. */
+export function isFresh(q, maxAgeMs, now = Date.now()) {
+  return q?.status === 'ok' && q.observedAt != null && now - Date.parse(q.observedAt) < maxAgeMs;
+}
 
 export function quota(provider, source, fields = {}) {
   return { provider, source, status: 'ok', plan: null, observedAt: null, windows: [], credits: null, message: null, ...fields };
@@ -45,8 +75,8 @@ export function isExpired(w, now = Date.now()) {
  * Runs a command without a shell. Returns {ok, stdout, stderr, notFound, timedOut}.
  * Injected into providers so tests can fake it.
  */
-export function runCommand(cmd, args, { timeoutMs = 20000, env = process.env } = {}) {
-  const r = spawnSync(cmd, args, { encoding: 'utf8', timeout: timeoutMs, env, maxBuffer: 16 * 1024 * 1024 });
+export function runCommand(cmd, args, { timeoutMs = 20000, env = process.env, cwd } = {}) {
+  const r = spawnSync(cmd, args, { encoding: 'utf8', timeout: timeoutMs, env, cwd, maxBuffer: 16 * 1024 * 1024 });
   return {
     ok: !r.error && r.status === 0,
     stdout: r.stdout || '',
