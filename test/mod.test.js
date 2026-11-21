@@ -34,6 +34,26 @@ test('normPath / pickSession: exact folder, Windows case, nearest folder, none',
   assert.equal(logic.pickSession(null, '/w/api'), null);
 });
 
+test('choosePane: focused terminal; panel focused → same tab terminal; layout block', () => {
+  const panes = [
+    { pane: 'p1', terminal: 't1', tab: 'A', cwd: '/w/api', app: null, focused: false },
+    { pane: 'p2', terminal: 't2', tab: 'A', cwd: '/w/web', app: 'claude-code', focused: false },
+    { pane: 'p3', terminal: null, mod: 'herdr-context', tab: 'A', focused: true },
+    { pane: 'p4', terminal: 't4', tab: 'B', cwd: '/w/other', app: 'claude-code', focused: false },
+  ];
+  // the panel itself is focused: prefer the last terminal seen, else Claude's, never another tab
+  assert.equal(logic.choosePane({ tab: 'A', pane: 'p3', terminal: null, cwd: null }, panes, 'p1').cwd, '/w/api');
+  assert.equal(logic.choosePane({ tab: 'A', pane: 'p3', terminal: null, cwd: null }, panes, null).cwd, '/w/web');
+  // a terminal is focused
+  const focusedP1 = panes.map((p) => ({ ...p, focused: p.pane === 'p1' }));
+  assert.deepEqual(logic.choosePane({ tab: 'A', pane: 'p1', terminal: 't1', cwd: '/w/api' }, focusedP1, null), { cwd: '/w/api', app: null, pane: 'p1' });
+  // a layout terminal block: terminal set, no pane focused
+  const none = panes.map((p) => ({ ...p, focused: false }));
+  assert.equal(logic.choosePane({ tab: 'A', pane: null, terminal: 't9', cwd: '/w/block' }, none, null).cwd, '/w/block');
+  // nothing at all
+  assert.deepEqual(logic.choosePane(null, [], null), { cwd: null, app: null, pane: null });
+});
+
 test('formatting helpers', () => {
   assert.equal(logic.fmt(1234), '1.2k');
   assert.equal(logic.fmt(2_500_000), '2.50M');
@@ -178,8 +198,8 @@ test('mod main.js: fetches through the bundled CLI and draws panel and chip', as
     appHome,
     checking: false,
     props: {},
-    focused: { space: 's1', tab: 't1', pane: 'p1', cwd: '/p' },
-    panes: [{ pane: 'p1', focused: true, cwd: '/p', app: 'claude-code' }],
+    focused: { space: 's1', tab: 't1', pane: 'p1', terminal: 'tm1', cwd: '/p' },
+    panes: [{ pane: 'p1', terminal: 'tm1', tab: 't1', focused: true, cwd: '/p', app: 'claude-code' }],
     execCalls: [],
     // keep the CLI away from the real machine: no real claude/codex/kiro, temp caches
     env: { CLAUDE_CONFIG_DIR: path.dirname(projects), XDG_CACHE_HOME: cache, CODEX_HOME: tmp(), PATH: path.dirname(process.execPath) },
@@ -230,11 +250,20 @@ test('mod main.js: fetches through the bundled CLI and draws panel and chip', as
 
   // another folder: explains instead of showing the wrong session
   globalThis.__herdr.focused = { cwd: '/elsewhere' };
-  globalThis.__herdr.panes = [{ pane: 'p2', focused: true, cwd: '/elsewhere', app: 'codex' }];
+  globalThis.__herdr.panes = [{ pane: 'p2', terminal: 'tm2', tab: 't1', focused: true, cwd: '/elsewhere', app: 'codex' }];
   assert.ok(texts(m.render()).includes('codex: context view supports Claude Code for now.'));
 
+  // the panel itself focused (what clicking it does): still shows the tab's terminal
+  globalThis.__herdr.focused = { tab: 't1', pane: 'pm', terminal: null, cwd: null };
+  globalThis.__herdr.panes = [
+    { pane: 'p1', terminal: 'tm1', tab: 't1', focused: false, cwd: '/p', app: 'claude-code' },
+    { pane: 'pm', terminal: null, mod: 'herdr-context', tab: 't1', focused: true },
+  ];
+  assert.ok(texts(m.render()).includes('MAKEUP'), 'panel focus falls back to the terminal');
+
   // chip
-  globalThis.__herdr.focused = { cwd: '/p' };
+  globalThis.__herdr.focused = { tab: 't1', pane: 'p1', terminal: 'tm1', cwd: '/p' };
+  globalThis.__herdr.panes = [{ pane: 'p1', terminal: 'tm1', tab: 't1', focused: true, cwd: '/p', app: 'claude-code' }];
   globalThis.__herdr.props = { view: 'chip' };
   assert.ok(texts(m.render()).includes('ctx 1.3k'));
 

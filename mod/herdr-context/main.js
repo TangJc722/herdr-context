@@ -6,7 +6,7 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { exec, appHome, readTextFile, theme, focused, panes, props, checking } from "herdr";
-import { pickSession, fmt, pctText, sparkline, resetsIn, ago, level, worstWindow, makeup, chipText, baseName, errorLine } from "./logic.js";
+import { choosePane, pickSession, fmt, pctText, sparkline, resetsIn, ago, level, worstWindow, makeup, chipText, baseName, errorLine } from "./logic.js";
 import { SAMPLE_SESSIONS, SAMPLE_QUOTA } from "./sample.js";
 
 const CONTEXT_EVERY_MS = 15_000;
@@ -91,9 +91,9 @@ export default class HerdrContext extends View {
 
   current() {
     if (this.preview) return { pane: null, cwd: this.sessions[0].cwd, session: this.sessions[0] };
-    const f = focused();
-    const pane = panes().find((p) => p.focused) ?? null;
-    return { pane, cwd: f?.cwd ?? pane?.cwd ?? null, session: pickSession(this.sessions ?? [], f?.cwd ?? pane?.cwd) };
+    const target = choosePane(focused(), panes(), this.lastPane);
+    if (target.pane) this.lastPane = target.pane;
+    return { pane: target, cwd: target.cwd, session: pickSession(this.sessions ?? [], target.cwd) };
   }
 
   // ---------- pieces ----------
@@ -137,7 +137,7 @@ export default class HerdrContext extends View {
     if (this.error && !this.sessions) return box.child(this.title(t, "This pane")).child(div().text_color(t.blocked).child(this.error));
     if (!session) {
       const app = pane?.app ?? null;
-      const why = !cwd ? "Focus a terminal pane to see its agent's context."
+      const why = !cwd ? "No terminal in this tab."
         : app && !/claude/i.test(app) ? `${app}: context view supports Claude Code for now.`
         : this.sessions == null ? "Loading…" : "No recent Claude Code session in this folder.";
       return box.child(this.title(t, "This pane", cwd ? baseName(cwd) : null)).child(this.dim(t, why));

@@ -26,6 +26,28 @@ export function normPath(p) {
   return s;
 }
 
+/**
+ * The terminal whose agent the panel describes. Clicking the panel moves the
+ * focus onto the panel itself (a mod pane, no terminal), so then fall back to
+ * a terminal in the same tab: the last one focused, else one running Claude,
+ * else the first. A focused layout terminal block has a terminal but no pane.
+ * @returns {{cwd: string|null, app: string|null, pane: string|null}}
+ */
+export function choosePane(focus, paneList, lastPane) {
+  const list = Array.isArray(paneList) ? paneList : [];
+  const own = list.find((p) => p.focused) ?? null;
+  if (own?.terminal) return { cwd: own.cwd ?? focus?.cwd ?? null, app: own.app ?? null, pane: own.pane };
+  if (!own && focus?.terminal) return { cwd: focus.cwd ?? null, app: null, pane: null };
+  const tab = focus?.tab ?? own?.tab ?? null;
+  const terms = list.filter((p) => p.terminal && (!tab || p.tab === tab));
+  const pick =
+    terms.find((p) => p.pane === lastPane) ??
+    terms.find((p) => /claude/i.test(p.app ?? "")) ??
+    terms[0] ??
+    null;
+  return pick ? { cwd: pick.cwd ?? null, app: pick.app ?? null, pane: pick.pane } : { cwd: null, app: null, pane: null };
+}
+
 const newest = (list) => list.slice().sort((a, b) => String(b.lastTs ?? "").localeCompare(String(a.lastTs ?? "")))[0] ?? null;
 
 /** The Claude session for a pane's folder: same folder first (newest),
