@@ -1,9 +1,13 @@
 # herdr-context
 
-What is in your coding agent's context window, and where it came from.
+**English** | [简体中文](README.zh-CN.md)
+
+What is in your coding agent's context window, where it came from, and how much
+of each subscription you have left.
 A data layer and CLI first; a [Herdr](https://herdr.dev) mod on top next.
 
-Supports **Claude Code** today. Codex is next (its rollout events are already mapped, see Roadmap).
+Context analysis supports **Claude Code** today (Codex next, see Roadmap).
+Subscription usage covers Claude, Codex and Kiro, plus Cursor, Copilot and others through quota-axi.
 
 ```
 claude · 1dea6540 · ~/work/api (main) · claude-opus-5-5 · v2.1.330
