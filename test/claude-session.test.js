@@ -109,3 +109,15 @@ test('empty session has no composition', () => {
   s.apply({ type: 'assistant', message: {} });
   assert.equal(s.snapshot().requestCount, 0);
 });
+
+test('API error replies (model <synthetic>, zero usage) are not requests', async () => {
+  const { ClaudeSession } = await import('../src/claude/session.js');
+  const s = new ClaudeSession();
+  s.apply({ type: 'assistant', requestId: 'r1', timestamp: '2026-11-16T00:00:00Z', message: { model: 'claude-opus-5-5', content: [{ type: 'text', text: 'ok' }], usage: { input_tokens: 5, cache_read_input_tokens: 170000, output_tokens: 10 } } });
+  s.apply({ type: 'assistant', uuid: 'e1', isApiErrorMessage: true, timestamp: '2026-11-16T00:11:00Z', message: { model: '<synthetic>', content: [{ type: 'text', text: "API Error: Your account can't receive replies" }], usage: { input_tokens: 0, output_tokens: 0 } } });
+  s.apply({ type: 'assistant', uuid: 'e2', timestamp: '2026-11-16T00:28:00Z', message: { model: '<synthetic>', content: [{ type: 'text', text: 'Login expired' }], usage: { input_tokens: 0, output_tokens: 0 } } });
+  const snap = s.snapshot();
+  assert.equal(snap.requestCount, 1);
+  assert.equal(snap.contextTokens, 170005);
+  assert.equal(snap.model, 'claude-opus-5-5');
+});

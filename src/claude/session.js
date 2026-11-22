@@ -13,6 +13,8 @@
 //   compactMetadata:{trigger, preTokens}} record; the summary that follows is a
 //   user record with isCompactSummary.
 // - "cost-state" records carry Claude Code's own running cost totals.
+// - API errors are logged as assistant records with isApiErrorMessage, model
+//   "<synthetic>" and zero usage; they are skipped.
 import path from 'node:path';
 import { estimateTokens, IMAGE_TOKENS_ESTIMATE } from '../estimate.js';
 
@@ -119,6 +121,10 @@ export class ClaudeSession {
 
   #assistant(rec, side) {
     const msg = rec.message || {};
+    // API errors (signed out, rate limited, overloaded...) are logged as replies
+    // from model "<synthetic>" with all-zero usage: no request reached the model,
+    // so they must not count as one (they would read as an empty context).
+    if (rec.isApiErrorMessage || msg.model === '<synthetic>') return;
     const key = rec.requestId || msg.id || rec.uuid;
     const u = msg.usage;
     if (u && key && !this.seenRequests.has(key)) {
