@@ -13,6 +13,11 @@
 //   $CODEX_HOME/session_index.jsonl) in the terminal title, when there is one.
 //   Sessions started outside a terminal (desktop app / IDE, `codex exec`,
 //   internal and sub-agent threads) never run in a pane and are left out.
+//   Newer Codex keeps every thread (folder, name, log path, origin) in a SQLite
+//   database, $CODEX_HOME/state_<n>.sqlite (table "threads"); it is read
+//   read-only with Node's built-in node:sqlite when available, else the
+//   rollout logs' first lines are scanned. The title's thread part is the
+//   thread name cut to 48 characters with "...".
 //
 // Without a title match: the newest session in the folder that is not already
 // another pane's and does not carry a different title.
@@ -22,9 +27,10 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { claudeProjectsDir } from './claude/discover.js';
 import { loadClaudeSession } from './claude/load.js';
-import { codexHome, listRollouts } from './quota/codex.js';
+import { codexHome, listRollouts, readRollout } from './quota/codex.js';
 import { loadCodexSession } from './codex/load.js';
 
 export const norm = (p) => {
@@ -131,11 +137,13 @@ export function codexMeta(file, cache) {
   try {
     let head;
     if (file.endsWith('.zst')) {
-      return m; // cold (compressed) files are old sessions: not read for matching
+      // cold (compressed) logs: decompressed once; the header never changes, so it stays cached
+      head = readRollout(file).slice(0, 8 * 1024 * 1024);
+    } else {
+      head = readRange(file, 0, 256 * 1024).toString('utf8');
     }
-    head = readRange(file, 0, 256 * 1024).toString('utf8');
     // the header carries the base instructions and can be long: read on to its end
-    if (!head.includes('\n')) head = readRange(file, 0, 8 * 1024 * 1024).toString('utf8');
+    if (!head.includes('\n') && !file.endsWith('.zst')) head = readRange(file, 0, 8 * 1024 * 1024).toString('utf8');
     const first = head.split('\n')[0];
     let p = null;
     try {
@@ -221,6 +229,64 @@ function claudeCandidates(cwd, projectsDir, cache, seen) {
 
 const PANE_SOURCES = new Set(['cli', 'unknown', null]);
 
+/** Codex's thread list from its state database, or null when it can't be read. */
+export function codexStateThreads(home, env = process.env) {
+  const dir = env.CODEX_SQLITE_HOME ? path.resolve(env.CODEX_SQLITE_HOME) : home;
+  let file;
+  try {
+    file = fs.readdirSync(dir)
+      .filter((n) => /^state_\d+\.sqlite$/.test(n))
+      .sort((a, b) => Number(b.match(/\d+/)[0]) - Number(a.match(/\d+/)[0]))[0];
+  } catch {
+    return null;
+  }
+  if (!file) return null;
+  const emit = process.emitWarning;
+  let db;
+  try {
+    process.emitWarning = () => {}; // node:sqlite announces itself as experimental on stderr
+    const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite');
+    db = new DatabaseSync(path.join(dir, file), { readOnly: true });
+    const cols = new Set(db.prepare('PRAGMA table_info(threads)').all().map((c) => c.name));
+    const pick = ['id', 'rollout_path', 'cwd', 'source', 'name', 'agent_role', 'archived', 'updated_at', 'updated_at_ms'].filter((c) => cols.has(c));
+    if (!cols.has('rollout_path') || !cols.has('cwd')) return null;
+    return db.prepare(`SELECT ${pick.join(', ')} FROM threads ORDER BY updated_at DESC LIMIT 5000`).all().map((r) => ({
+      id: r.id ?? null,
+      file: r.rollout_path,
+      cwd: r.cwd,
+      source: r.source ?? null,
+      sub: Boolean(r.agent_role) || /^\s*\{/.test(String(r.source ?? '')),
+      name: r.name || null,
+    }));
+  } catch {
+    return null;
+  } finally {
+    try {
+      db?.close();
+    } catch {}
+    process.emitWarning = emit;
+  }
+}
+
+/** Codex candidates from its state database. */
+function codexDbCandidates(cwd, threads, names) {
+  const out = [];
+  for (const t of threads) {
+    if (t.sub || !PANE_SOURCES.has(t.source) || !t.file) continue;
+    const rel = folderRelation(t.cwd, cwd);
+    if (!rel) continue;
+    let st;
+    try {
+      st = fs.statSync(t.file);
+    } catch {
+      continue;
+    }
+    const titles = [t.name, t.id ? names.get(t.id) : null].filter(Boolean);
+    out.push({ agent: 'codex', file: t.file, rel, cwd: t.cwd, mtimeMs: st.mtimeMs, id: t.id, title: titles[0] ?? null, titles });
+  }
+  return out;
+}
+
 function codexCandidates(cwd, rollouts, cache, names, seen) {
   const out = [];
   for (const r of rollouts) {
@@ -248,13 +314,30 @@ export function codexTitleProject(title) {
   const last = titleKey(parts[parts.length - 1]);
   if (!last || GENERIC_TITLE.test(last)) return null;
   const cut = /(…|\.\.\.)$/.test(last);
-  return { name: last.replace(/(…|\.\.\.)$/, ''), prefix: cut };
+  return { name: last.replace(/(…|\.\.\.)$/, '').trimEnd(), prefix: cut };
+}
+
+/** The thread-name part of a Codex title ("<spinner> <name> | <project>"), or null. */
+export function codexTitleThread(title) {
+  const parts = String(title ?? '').split(' | ');
+  if (parts.length < 2) return null;
+  const first = titleKey(parts[0]);
+  if (!first) return null;
+  const cut = /(…|\.\.\.)$/.test(first);
+  return { name: first.replace(/(…|\.\.\.)$/, '').trimEnd(), prefix: cut };
 }
 
 /** Whether a session folder sits in (or is) the project the title names. */
 export function inProject(cwd, project) {
   if (!project || !cwd) return false;
   return (norm(cwd) ?? '').toLowerCase().split('/').some((seg) => (project.prefix ? seg.startsWith(project.name) : seg === project.name));
+}
+
+/** Whether a session folder is the project folder itself (its last segment). */
+export function isProjectRoot(cwd, project) {
+  if (!project || !cwd) return false;
+  const last = (norm(cwd) ?? '').toLowerCase().split('/').pop();
+  return project.prefix ? last.startsWith(project.name) : last === project.name;
 }
 
 /**
@@ -268,7 +351,14 @@ export function assign(items) {
   const titleMatches = (it, c) => {
     const k = titleKey(it.title);
     if (!k) return false;
-    if (c.agent === 'codex') return c.titles.some((t) => t.length >= 3 && k.includes(t.toLowerCase()));
+    if (c.agent === 'codex') {
+      const thread = codexTitleThread(it.title);
+      return c.titles.some((t) => {
+        const n = t.trim().toLowerCase();
+        if (thread) return thread.prefix ? n.startsWith(thread.name) : n === thread.name;
+        return n.length >= 3 && k.includes(n); // a custom title layout
+      });
+    }
     return c.titles.some((t) => titleKey(t) === k);
   };
   // 1. exact title matches
@@ -291,7 +381,10 @@ export function assign(items) {
     if (it.agent === 'codex') {
       const proj = codexTitleProject(it.title);
       const inIt = free.filter((x) => inProject(x.cwd, proj));
-      if (inIt.length) free = inIt;
+      // the project's own folder before folders inside it (e.g. a worktree there)
+      const root = inIt.filter((x) => isProjectRoot(x.cwd, proj));
+      if (root.length) free = root;
+      else if (inIt.length) free = inIt;
     }
     const order = (a, b) => (a.rel === 'same' ? 0 : 1) - (b.rel === 'same' ? 0 : 1) || b.mtimeMs - a.mtimeMs;
     const fit = free.filter((x) => !specific || it.agent === 'codex' || !x.title).sort(order);
@@ -315,10 +408,13 @@ export function matchPanes(panes, { env = process.env, projectsDir = claudeProje
   const list = (panes ?? []).filter((p) => p && p.pane && p.cwd && (p.agent === 'claude' || p.agent === 'codex'));
   let rollouts = null;
   let names = null;
+  let threads; // undefined: not read yet; null: no database
   const items = list.map((p) => {
     if (p.agent === 'claude') return { ...p, cands: claudeCandidates(p.cwd, projectsDir, cache, seen) };
-    rollouts ??= listRollouts(path.join(home, 'sessions'), { maxFiles: 400 });
     names ??= codexThreadNames(home);
+    if (threads === undefined) threads = codexStateThreads(home, env);
+    if (threads) return { ...p, cands: codexDbCandidates(p.cwd, threads, names) };
+    rollouts ??= listRollouts(path.join(home, 'sessions'), { maxFiles: 400 });
     return { ...p, cands: codexCandidates(p.cwd, rollouts, cache, names, seen) };
   });
   const byKind = (k) => assign(items.filter((i) => i.agent === k));

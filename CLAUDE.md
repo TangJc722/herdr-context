@@ -30,8 +30,12 @@ Codex logs (`$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl[.zst]`):
 - token_count repeats without new usage: skip repeats. Old files are zstd (`.zst`).
 - Sessions from the desktop app / IDE (`source: vscode`), `exec`, `mcp`, sub-agents
   (`source: {subagent}` / `parent_thread_id`) never run in a pane.
-- Terminal title: "<spinner> <thread name> | <project>", project = git root folder name
-  (24 chars, "…"). A pane started in a parent folder must be narrowed by that project name.
+- Terminal title: "<spinner> <thread name> | <project>": thread name cut to 48 chars with
+  "...", project = git root folder name (24 chars). A pane started in a parent folder must
+  be narrowed to the project's own folder (not worktrees inside it, e.g. `wt-m4c`).
+- Thread names live in Codex's SQLite DB `$CODEX_HOME/state_<n>.sqlite` (table `threads`:
+  id, rollout_path, cwd, source, name, ...), not reliably in `session_index.jsonl`.
+  Read it read-only via `node:sqlite`; fall back to scanning rollouts (incl. `.zst`).
 
 Matching panes to sessions: several sessions share a folder all the time. Never pick
 "newest in the folder" without title evidence; when guessing, the panel says so.

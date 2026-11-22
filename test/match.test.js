@@ -137,3 +137,39 @@ test('codexTitleProject reads the last part, cut names as prefixes', async () =>
   assert.ok(inProject('/w/a-very-long-project-name-2/src', { name: 'a-very-long-project-name', prefix: true }));
   assert.ok(!inProject('/w/other', { name: 'api', prefix: false }));
 });
+
+test("Codex state database: the pane's thread name, else the project's own folder over a worktree inside it", async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const home = tmp();
+  const env = { XDG_CACHE_HOME: tmp() };
+  const d = path.join(home, 'sessions', '2026', '11', '11');
+  fs.mkdirSync(d, { recursive: true });
+  const log = (name, ts) => {
+    const u = { input_tokens: 1000, cached_input_tokens: 0, output_tokens: 0, total_tokens: 1000 };
+    const f = path.join(d, `rollout-${name}.jsonl`);
+    fs.writeFileSync(f, jl([
+      { timestamp: ts, type: 'session_meta', payload: { id: name, cwd: '/x', source: 'cli' } },
+      { timestamp: ts, type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: u, last_token_usage: u, model_context_window: 475000 } } },
+    ]));
+    fs.utimesSync(f, new Date(ts), new Date(ts));
+    return f;
+  };
+  const db = new DatabaseSync(path.join(home, 'state_5.sqlite'));
+  db.exec('CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT, cwd TEXT, source TEXT, name TEXT, agent_role TEXT, updated_at INTEGER)');
+  const add = db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?)');
+  const W = 'C:\\P\\myProjects\\dsh-agent-workbench';
+  add.run('workbench', log('workbench', '2026-11-19T17:43:00Z'), W, 'cli', 'DSH插件优化-Fable设计方案', null, 1);
+  add.run('other', log('other', '2026-11-20T10:00:00Z'), W, 'cli', null, null, 2);
+  add.run('worktree', log('worktree', '2026-11-22T09:00:00Z'), W + '\\wt-m4c', 'cli', null, null, 3);
+  add.run('app', log('app', '2026-11-22T10:00:00Z'), W, 'vscode', null, null, 4);
+  add.run('sub', log('sub', '2026-11-22T11:00:00Z'), W, '{"subagent":"review"}', null, 'reviewer', 5);
+  db.close();
+  const run = (title) => matchPanes([{ pane: 'x', agent: 'codex', cwd: 'C:\\P\\myProjects', title }], { env, projectsDir: tmp(), home })[0];
+  const named = run('DSH插件优化-Fable设计方案 | dsh-agent-workbench');
+  assert.deepEqual([named.how, named.session.sessionId], ['title', 'workbench']);
+  assert.equal(run('⠋ Something else | dsh-agent-workbench').session.sessionId, 'other', 'project root, newest; not the worktree');
+  assert.equal(run('⠋ wt-m4c').session.sessionId, 'worktree');
+  const { codexTitleThread } = await import('../src/match.js');
+  assert.deepEqual(codexTitleThread('⠋ a long thread name cut ... | proj'), { name: 'a long thread name cut', prefix: true });
+  assert.equal(codexTitleThread('⠋ proj'), null);
+});

@@ -65,9 +65,12 @@ How it works:
   - Claude Code sets the terminal title to the session's title and writes the
     same title to the log (`ai-title` / `custom-title` records), so a pane whose
     title matches a session gets exactly that one.
-  - Codex shows a thread's name (`/rename`, kept in `session_index.jsonl`) and
-    the project (git root folder name) in the title; a pane started in a parent
-    folder is narrowed to that project's sessions. Sessions from the desktop
+  - Codex's title is "<thread name> | <project>" (name cut to 48 characters,
+    project = git root folder name). Thread names, folders and log paths come
+    from Codex's own database (`$CODEX_HOME/state_<n>.sqlite`, read-only through
+    Node's built-in `node:sqlite`; else from the logs and `session_index.jsonl`).
+    A pane started in a parent folder is narrowed to the project's own folder
+    (before worktrees or folders inside it). Sessions from the desktop
     app / IDE, `codex exec`, and sub-agent threads never run in a pane and are skipped.
   - Otherwise: the newest session in the pane's folder (or one inside / above
     it) that is not another pane's and not titled for another window. The panel
