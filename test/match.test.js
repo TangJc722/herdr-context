@@ -106,3 +106,34 @@ test('CLI: match command', async () => {
   assert.equal(out[0].session.sessionId, 's1');
   assert.equal(out[0].how, 'title');
 });
+
+test('Codex pane started in a parent folder: the project in its title picks the sub-project', () => {
+  const home = tmp();
+  const env = { XDG_CACHE_HOME: tmp() };
+  const d = path.join(home, 'sessions', '2026', '11', '20');
+  fs.mkdirSync(d, { recursive: true });
+  const put = (name, cwd, ts) => {
+    const u = { input_tokens: 1000, cached_input_tokens: 0, output_tokens: 0, total_tokens: 1000 };
+    const f = path.join(d, `rollout-${name}.jsonl`);
+    fs.writeFileSync(f, jl([
+      { timestamp: ts, type: 'session_meta', payload: { id: name, cwd, source: 'cli' } },
+      { timestamp: ts, type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: u, last_token_usage: u, model_context_window: 475000 } } },
+    ]));
+    fs.utimesSync(f, new Date(ts), new Date(ts));
+  };
+  put('workbench', 'C:\\P\\myProjects\\dsh-agent-workbench', '2026-11-19T17:43:00Z');
+  put('worktree', 'C:\\P\\myProjects\\wt-m4c', '2026-11-22T09:00:00Z');
+  const run = (title) => matchPanes([{ pane: 'x', agent: 'codex', cwd: 'C:\\P\\myProjects', title }], { env, projectsDir: tmp(), home })[0];
+  assert.equal(run('⠋ dsh-agent-workbench').session.sessionId, 'workbench');
+  assert.equal(run('deck work | dsh-agent-workbench').session.sessionId, 'workbench');
+  assert.equal(run('Codex').session.sessionId, 'worktree', 'no project in the title: newest');
+});
+
+test('codexTitleProject reads the last part, cut names as prefixes', async () => {
+  const { codexTitleProject, inProject } = await import('../src/match.js');
+  assert.deepEqual(codexTitleProject('⠙ fix login | api'), { name: 'api', prefix: false });
+  assert.deepEqual(codexTitleProject('a-very-long-project-name…'), { name: 'a-very-long-project-name', prefix: true });
+  assert.equal(codexTitleProject('codex'), null);
+  assert.ok(inProject('/w/a-very-long-project-name-2/src', { name: 'a-very-long-project-name', prefix: true }));
+  assert.ok(!inProject('/w/other', { name: 'api', prefix: false }));
+});

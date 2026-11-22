@@ -197,7 +197,10 @@ export default class HerdrContext extends View {
     const where = [session.model, session.gitBranch && session.gitBranch !== "HEAD" ? session.gitBranch : null].filter(Boolean).join(" · ");
     const card = v_flex().gap(10).p(12).rounded(10).bg(t.surface).border(1).border_color(t.border)
       .child(h_flex().gap(6).items_center()
-        .child(div().text_size(12.5).font_semibold().text_color(t.foreground).truncate().child(baseName(session.cwd ?? cwd) || "—"))
+        .child(div().id("hc-where").text_size(12.5).font_semibold().text_color(t.foreground).truncate()
+          // hover: which log, and why this one (for checking a match)
+          .tooltip([session.cwd, match?.file, match ? `${tr("matchedBy")}: ${match.how}${match.paneTitle ? ` · "${match.paneTitle}"` : ""}` : null].filter(Boolean).join("\n"))
+          .child(baseName(session.cwd ?? cwd) || "—"))
         .child(div().flex_1().text_size(11).text_color(t.dim).truncate().child(where)))
       .child(h_flex().gap(8).items_end()
         .child(div().text_size(26).font_semibold().text_color(pct != null ? this.valueColor(t, pct) : t.foreground)

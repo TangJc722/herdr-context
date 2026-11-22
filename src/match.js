@@ -230,12 +230,32 @@ function codexCandidates(cwd, rollouts, cache, names, seen) {
     const rel = folderRelation(m.cwd, cwd);
     if (!rel) continue;
     const name = m.id ? names.get(m.id) ?? null : null;
-    out.push({ agent: 'codex', file: r.path, rel, mtimeMs: r.mtimeMs, id: m.id, title: name, titles: name ? [name] : [] });
+    out.push({ agent: 'codex', file: r.path, rel, cwd: m.cwd, mtimeMs: r.mtimeMs, id: m.id, title: name, titles: name ? [name] : [] });
   }
   return out;
 }
 
 // ---------- assignment ----------
+
+/**
+ * The project name in a Codex terminal title. Codex's default title is
+ * "<spinner> <thread name> | <project>", where <project> is the git root's
+ * folder name (else the cwd's), cut to 24 characters with "…".
+ * @returns {{name:string, prefix:boolean}|null}
+ */
+export function codexTitleProject(title) {
+  const parts = String(title ?? '').split(' | ');
+  const last = titleKey(parts[parts.length - 1]);
+  if (!last || GENERIC_TITLE.test(last)) return null;
+  const cut = /(…|\.\.\.)$/.test(last);
+  return { name: last.replace(/(…|\.\.\.)$/, ''), prefix: cut };
+}
+
+/** Whether a session folder sits in (or is) the project the title names. */
+export function inProject(cwd, project) {
+  if (!project || !cwd) return false;
+  return (norm(cwd) ?? '').toLowerCase().split('/').some((seg) => (project.prefix ? seg.startsWith(project.name) : seg === project.name));
+}
 
 /**
  * Pairs panes with sessions. Pure: candidates are given.
@@ -265,7 +285,14 @@ export function assign(items) {
     if (result.has(it.pane)) continue;
     const k = titleKey(it.title);
     const specific = k && !GENERIC_TITLE.test(k);
-    const free = it.cands.filter((x) => !taken.has(x.file));
+    let free = it.cands.filter((x) => !taken.has(x.file));
+    // Codex: a pane started in a parent folder sees every sub-project's sessions;
+    // the project named in its title narrows them down
+    if (it.agent === 'codex') {
+      const proj = codexTitleProject(it.title);
+      const inIt = free.filter((x) => inProject(x.cwd, proj));
+      if (inIt.length) free = inIt;
+    }
     const order = (a, b) => (a.rel === 'same' ? 0 : 1) - (b.rel === 'same' ? 0 : 1) || b.mtimeMs - a.mtimeMs;
     const fit = free.filter((x) => !specific || it.agent === 'codex' || !x.title).sort(order);
     // nothing untitled left: the newest anyway (the panel says it is a guess)
@@ -304,7 +331,7 @@ export function matchPanes(panes, { env = process.env, projectsDir = claudeProje
     const { cand, how, others } = hit;
     try {
       const session = cand.agent === 'claude' ? loadClaudeSession(claudeEntry(cand), { env }) : loadCodexSession({ file: cand.file });
-      return { pane: p.pane, agent: p.agent, how, others, session };
+      return { pane: p.pane, agent: p.agent, how, others, paneTitle: p.title ?? null, file: cand.file, session };
     } catch (err) {
       return { pane: p.pane, agent: p.agent, how, others, session: null, error: `${err.name}: ${err.message}` };
     }

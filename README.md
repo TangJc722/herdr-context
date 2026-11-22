@@ -65,12 +65,15 @@ How it works:
   - Claude Code sets the terminal title to the session's title and writes the
     same title to the log (`ai-title` / `custom-title` records), so a pane whose
     title matches a session gets exactly that one.
-  - Codex shows a thread's name (`/rename`, kept in `session_index.jsonl`) in
-    the title; sessions from the desktop app / IDE, `codex exec`, and sub-agent
-    threads never run in a pane and are skipped.
+  - Codex shows a thread's name (`/rename`, kept in `session_index.jsonl`) and
+    the project (git root folder name) in the title; a pane started in a parent
+    folder is narrowed to that project's sessions. Sessions from the desktop
+    app / IDE, `codex exec`, and sub-agent threads never run in a pane and are skipped.
   - Otherwise: the newest session in the pane's folder (or one inside / above
     it) that is not another pane's and not titled for another window. The panel
     then says other sessions share the folder; `/rename` the session to pin it.
+    Hovering the folder name on the card shows the log file, how it was matched
+    and the pane title Herdr reported.
   - Folder facts and titles are cached by file size
     (`~/.cache/herdr-context/session-meta.json`), so polling reads only new bytes.
   With the panel itself focused, it describes the tab's last focused terminal.
