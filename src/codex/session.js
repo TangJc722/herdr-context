@@ -19,6 +19,7 @@
 //   web_search_call, reasoning (encrypted: left out of the split).
 import { estimateTokens } from '../estimate.js';
 
+const BASELINE = 12000; // codex-rs protocol.rs BASELINE_TOKENS
 const CATEGORIES = ['user', 'assistant', 'toolUse', 'toolResult', 'injected', 'compactSummary'];
 const KNOWN_TYPES = new Set(['session_meta', 'turn_context', 'response_item', 'compacted', 'event_msg']);
 // User-role messages Codex writes itself (environment, AGENTS.md, instructions).
@@ -269,7 +270,9 @@ export class CodexSession {
         tokens,
         window: this.window,
         windowSource: this.window ? 'log' : 'unknown',
-        percent: tokens == null || !this.window ? null : tokens / this.window,
+        // Codex's own formula (TokenUsage::percent_of_context_window_remaining):
+        // 12k of fixed prompt is left out of both sides, so it matches Codex's footer
+        percent: tokens == null || !this.window || this.window <= BASELINE ? null : Math.max(0, tokens - BASELINE) / (this.window - BASELINE),
         officialPercent: null,
       },
       trend: this.requests.slice(-trendLength).map((r) => r.prompt),

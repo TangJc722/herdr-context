@@ -9,7 +9,7 @@ import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { exec, appHome, home, readTextFile, theme, focused, panes, agents, spaces, props, checking, layout, run, shared, setShared } from "herdr";
 import {
-  choosePane, pickSession, fmt, pctText, level, worstWindow, errorLine, panelState, toggleCommands,
+  choosePane, fmt, pctText, level, worstWindow, errorLine, panelState, toggleCommands,
   makeupParts, displayPath, trendBars, spaceAgents, agentKind, splitProviders, providerName, baseName,
 } from "./logic.js";
 import { translator, categoryLabel, windowLabel, resetsText, agoText, normLang } from "./i18n.js";
@@ -22,7 +22,7 @@ const LANG_KEY = "herdr-context.lang";
 
 export default class HerdrContext extends View {
   init(_props, cx) {
-    this.sessions = null;
+    this.sessions = null; // pane id → {how, others, session}, from `herdr-context match`
     this.quota = null;
     this.error = null;
     this.quotaError = null;
@@ -36,7 +36,7 @@ export default class HerdrContext extends View {
       // `herdr-app check`: don't start the CLI; draw sample data so the check
       // renders every part (panel, agents list, chip).
       this.preview = true;
-      this.sessions = SAMPLE_SESSIONS;
+      this.sessions = { sample: { how: "title", others: 0, session: SAMPLE_SESSIONS[0] } };
       this.quota = SAMPLE_QUOTA;
       this.at = this.quotaAt = Date.now();
       return;
@@ -65,7 +65,6 @@ export default class HerdrContext extends View {
     const r = await exec(this.config.node || "node", [this.config.cli, ...args], { timeout: 90_000 });
     if (r.code !== 0) {
       const msg = errorLine(r.stderr || r.stdout || "");
-      if (/no Claude Code session logs found/.test(msg)) return [];
       throw new Error(msg || `herdr-context exited with ${r.code}`);
     }
     return JSON.parse(r.stdout);
@@ -76,7 +75,8 @@ export default class HerdrContext extends View {
     this.loading = true;
     cx.spawn(async (cx) => {
       try {
-        this.sessions = await this.cli(["--list", "--json", "--limit", "12", "--recent", "48"]);
+        const rows = await this.cli(["match", "--json", "--panes", JSON.stringify(this.agentPanes())]);
+        this.sessions = Object.fromEntries(rows.map((r) => [r.pane, r]));
         this.error = null;
         this.at = Date.now();
       } catch (e) {
@@ -104,21 +104,33 @@ export default class HerdrContext extends View {
     });
   }
 
-  /** The terminal described, its Claude session (only when an agent runs there), and the space's agents. */
+  /** Every pane running Claude Code or Codex, for `herdr-context match`: the CLI
+   *  pairs each with its own session (by terminal title, else folder). */
+  agentPanes() {
+    const byPane = new Map(panes().map((p) => [p.pane, p]));
+    const out = [];
+    for (const a of agents()) {
+      const kind = agentKind(a.app);
+      const p = byPane.get(a.pane);
+      if (kind && p?.cwd) out.push({ pane: a.pane, agent: kind, cwd: p.cwd, title: p.title ?? a.title ?? "" });
+    }
+    return out.slice(0, 16);
+  }
+
+  /** The terminal described, its session (only when an agent runs there), and the space's agents. */
   current() {
     if (this.preview) {
-      return { pane: { app: "claude-code" }, cwd: this.sessions[0].cwd, session: this.sessions[0], agents: SAMPLE_AGENTS.map((a) => ({ ...a, session: this.sessions[0] })) };
+      const m = this.sessions.sample;
+      return { pane: { pane: "sample", app: "claude-code" }, cwd: m.session.cwd, session: m.session, match: m, agents: SAMPLE_AGENTS.map((a) => ({ ...a, session: m.session })) };
     }
     const f = focused();
     const target = choosePane(f, panes(), this.lastPane);
     if (target.pane) this.lastPane = target.pane;
-    const sessions = this.sessions ?? [];
-    // Only a pane running an agent gets a session, and only that agent's: a
-    // plain shell in a parent folder must not borrow a sub-folder's agent.
-    const kind = agentKind(target.app);
-    const session = kind ? pickSession(sessions, target.cwd, kind) : null;
+    const matches = this.sessions ?? {};
+    // Only a pane running an agent gets a session, and only its own.
+    const match = agentKind(target.app) && target.pane ? matches[target.pane] ?? null : null;
     const space = f?.space ?? spaces().find((s) => s.active)?.id ?? null;
-    return { pane: target, cwd: target.cwd, session, agents: spaceAgents(agents(), panes(), sessions, space) };
+    return { pane: target, cwd: target.cwd, session: match?.session ?? null, match, agents: spaceAgents(agents(), panes(), matches, space) };
   }
 
   lang() {
@@ -179,7 +191,7 @@ export default class HerdrContext extends View {
 
   // ---------- the focused agent ----------
 
-  focusCard(t, tr, session, cwd) {
+  focusCard(t, tr, session, cwd, match) {
     const c = session.context ?? {};
     const pct = c.percent != null ? c.percent * 100 : null;
     const where = [session.model, session.gitBranch && session.gitBranch !== "HEAD" ? session.gitBranch : null].filter(Boolean).join(" · ");
@@ -192,13 +204,18 @@ export default class HerdrContext extends View {
           .child(pct != null ? pctText(c.percent) : fmt(c.tokens)))
         .child(div().pb(4).text_size(11.5).text_color(t.muted)
           .child(c.window ? tr("tokensOf", { used: fmt(c.tokens), window: fmt(c.window) }) : tr("tokensInContext"))));
-    if (pct != null) card.child(this.bar(t, c.percent, this.color(t, pct), 6));
+    if (c.tokens == null) card.child(div().text_size(11).text_color(t.dim).child(tr("noRequests")));
+    else if (pct != null) card.child(this.bar(t, c.percent, this.color(t, pct), 6));
     else card.child(div().text_size(11).text_color(t.dim).child(tr("windowUnknown")));
 
     const bars = trendBars(session.trend, 48);
     if (bars.length > 1) {
       card.child(h_flex().h(28).gap(1).items_end().children(bars.map((h, i) =>
         div().flex_1().h(h).rounded(1).bg(i === bars.length - 1 ? t.accent : t.border))));
+    }
+    // matched by folder while other sessions share it: say it is the newest, not a certainty
+    if (match?.how === "folder" && match.others > 0) {
+      card.child(div().text_size(11).text_color(t.dim).child(tr("guessed", { n: match.others })));
     }
     const k = session.compactions ?? [];
     const facts = [
@@ -244,14 +261,14 @@ export default class HerdrContext extends View {
     })));
   }
 
-  agentsSection(t, tr, list, focusedCwd) {
+  agentsSection(t, tr, list, focusedPane) {
     if (!list.length) return null;
     // Without a window size there is no %, so bars compare the agents' token counts.
     const most = Math.max(1, ...list.map((a) => a.session?.context?.tokens ?? 0));
     return this.section(t, tr("agents"), null, v_flex().gap(2).children(list.map((a, i) => {
       const c = a.session?.context ?? {};
       const pct = c.percent != null ? c.percent * 100 : null;
-      const here = a.cwd && a.cwd === focusedCwd;
+      const here = a.pane && a.pane === focusedPane;
       const folder = baseName(a.cwd);
       return h_flex().id(`hc-agent-${i}`).gap(8).px(8).py(6).rounded(6).items_center().cursor_pointer()
         .when(here, (el) => el.bg(t.selected))
@@ -269,13 +286,14 @@ export default class HerdrContext extends View {
   }
 
   contextPart(t, tr) {
-    const { pane, cwd, session, agents: list } = this.current();
+    const { pane, cwd, session, match, agents: list } = this.current();
     if (this.error && !this.sessions) return div().text_color(t.blocked).text_size(12).child(this.error);
     const out = [];
     if (session) {
-      out.push(this.focusCard(t, tr, session, cwd));
+      out.push(this.focusCard(t, tr, session, cwd, match));
     } else {
-      const why = this.sessions == null ? tr("loading")
+      const why = this.sessions == null || (agentKind(pane?.app) && pane?.pane && !(pane.pane in this.sessions)) ? tr("loading")
+        : match?.error ? match.error
         : !cwd ? tr("noTerminal")
         : agentKind(pane?.app) ? tr("noSessionLog", { app: pane.app })
         : pane?.app ? tr("otherAgent", { app: pane.app })
@@ -284,7 +302,7 @@ export default class HerdrContext extends View {
         .child(div().text_size(12).text_color(t.muted).child(why)));
     }
     // the space's agents: when this pane has none, or when there are several to compare
-    if (list.length && (!session || list.length > 1)) out.push(this.agentsSection(t, tr, list, cwd));
+    if (list.length && (!session || list.length > 1)) out.push(this.agentsSection(t, tr, list, pane?.pane));
     if (session) {
       out.push(this.makeupSection(t, tr, session));
       out.push(this.filesSection(t, tr, session));

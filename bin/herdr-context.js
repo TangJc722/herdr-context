@@ -6,6 +6,8 @@
 //   herdr-context --agent codex   only one agent's sessions (claude | codex)
 //   herdr-context --session <id>  a session by id (prefix is enough)
 //   herdr-context --cwd <dir>     latest session started in <dir>
+//   herdr-context match --panes <json>
+//                                 the session running in each Herdr pane: [{pane, agent, cwd, title}]
 //   herdr-context quota           subscription usage: Claude, Codex, Kiro (+ quota-axi providers)
 //     --refresh                   ignore caches and freshness checks, ask every source now
 //     --passive                   never start claude / codex processes; local data only
@@ -18,6 +20,7 @@ import { listClaudeSessions, claudeProjectsDir } from '../src/claude/discover.js
 import { loadClaudeSession } from '../src/claude/load.js';
 import { listCodexSessions, loadCodexSession } from '../src/codex/load.js';
 import { collectQuotas } from '../src/quota/index.js';
+import { matchPanes } from '../src/match.js';
 import { renderSession, renderQuotas, fmt, bar } from '../src/render.js';
 
 // Anything unexpected: one readable line on stderr (the Herdr mod shows it), not a stack.
@@ -40,6 +43,7 @@ const { values: a, positionals } = parseArgs({
     json: { type: 'boolean' },
     dir: { type: 'string' },
     agent: { type: 'string' },
+    panes: { type: 'string' },
     refresh: { type: 'boolean' },
     passive: { type: 'boolean' },
     direct: { type: 'boolean' },
@@ -51,6 +55,7 @@ const { values: a, positionals } = parseArgs({
 if (a.help) {
   console.log(`usage:
   herdr-context [--list] [--agent claude|codex] [--session <id>] [--cwd <dir>] [--json] [--dir <claude projects dir>]
+  herdr-context match --panes '[{"pane":"p1","agent":"claude","cwd":"/work","title":"✳ Fix login"}]' [--json]
   herdr-context quota [--refresh] [--passive] [--direct] [--no-axi] [--json]`);
   process.exit(0);
 }
@@ -63,6 +68,19 @@ if (positionals[0] === 'quota') {
     axi: !a['no-axi'],
   });
   console.log(a.json ? JSON.stringify(q, null, 2) : renderQuotas(q));
+  process.exit(0);
+}
+if (positionals[0] === 'match') {
+  let panes;
+  try {
+    panes = JSON.parse(a.panes ?? '[]');
+  } catch {
+    console.error('herdr-context: --panes must be a JSON array');
+    process.exit(2);
+  }
+  const rows = matchPanes(panes, { projectsDir: a.dir || claudeProjectsDir() });
+  if (a.json) console.log(JSON.stringify(rows, null, 2));
+  else for (const r of rows) console.log(`${r.pane}  ${r.agent}  ${r.how ?? 'no session'}${r.others ? ` (+${r.others} other)` : ''}  ${r.session?.sessionId ?? r.error ?? ''}`);
   process.exit(0);
 }
 if (positionals.length) {

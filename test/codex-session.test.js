@@ -22,7 +22,7 @@ test('codex rollout: context, window and totals come from token_count', () => {
   // the repeated token_count (same totals) is not a new request
   assert.equal(s.requestCount, 4);
   assert.deepEqual(s.trend, [9200, 21500, 21920, 10080]);
-  assert.deepEqual(s.context, { tokens: 10080, window: 272000, windowSource: 'log', percent: 10080 / 272000, officialPercent: null });
+  assert.deepEqual(s.context, { tokens: 10080, window: 272000, windowSource: 'log', percent: 0, officialPercent: null });
   assert.equal(s.totals.cacheRead, 33000);
   assert.equal(s.totals.input, 29000);
   assert.equal(s.parseIssues.malformedLines, 1);
@@ -39,6 +39,14 @@ test('codex rollout: compaction, makeup and files', () => {
   const files = Object.fromEntries(s.files.map((f) => [f.path, [f.read, f.edit, f.write]]));
   assert.deepEqual(files, { 'src/lib.rs': [1, 1, 0], 'tests/add.rs': [0, 0, 1], 'Cargo.toml': [1, 0, 0] });
   assert.deepEqual(s.tools, { exec_command: 1, apply_patch: 1, shell: 1 });
+});
+
+test('codex %: Codex\'s own formula, 12k fixed prompt left out of both sides', async () => {
+  const { CodexSession } = await import('../src/codex/session.js');
+  const s = new CodexSession();
+  const u = { input_tokens: 400000, cached_input_tokens: 0, output_tokens: 12000, total_tokens: 412000 };
+  s.apply({ type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: u, last_token_usage: u, model_context_window: 475000 } } });
+  assert.equal(Math.round(s.snapshot().context.percent * 100), 86); // (412k-12k)/(475k-12k)
 });
 
 test('codex sub-agent threads are flagged', () => {
@@ -71,5 +79,5 @@ test('CLI lists Claude and Codex sessions together and skips sub-agents', () => 
   assert.deepEqual(none, []);
   const text = execFileSync(process.execPath, [cli, '--dir', path.join(tmp, 'claude')], { env }).toString();
   assert.match(text, /^codex · 0199aaaa · \/work\/app \(main\) · gpt-5\.5-codex/);
-  assert.match(text, /10k \/ 272k \(4%\)/);
+  assert.match(text, /10k \/ 272k \(0%\)/);
 });

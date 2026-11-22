@@ -240,8 +240,10 @@ export function trendBars(values, n = 48, max = 26, min = 3) {
   return v.map((x) => Math.round(min + ((x - lo) / (hi - lo)) * (max - min)));
 }
 
-/** Claude Code and Codex agents in a space, each with its session (by its pane's folder). */
+/** Claude Code and Codex agents in a space, each with its session: from `match`
+ *  results ({pane: {session}}) when given an object, else by its pane's folder. */
 export function spaceAgents(agentList, paneList, sessions, spaceId) {
+  const matched = sessions && !Array.isArray(sessions) ? sessions : null;
   const byPane = new Map((paneList ?? []).map((p) => [p.pane, p]));
   return (agentList ?? [])
     .filter((a) => (!spaceId || a.space === spaceId) && agentKind(a.app))
@@ -254,7 +256,8 @@ export function spaceAgents(agentList, paneList, sessions, spaceId) {
       const named = generic ? null : tn;
       const title = a.pane_name || named || baseName(cwd) || a.title || a.app;
       const kind = agentKind(a.app);
-      return { address: a.address, title, kind, status: a.status, cwd, session: pickSession(sessions, cwd, kind) };
+      const session = matched ? matched[a.pane]?.session ?? null : pickSession(sessions, cwd, kind);
+      return { address: a.address, pane: a.pane, title, kind, status: a.status, cwd, session };
     });
 }
 

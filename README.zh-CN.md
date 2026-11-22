@@ -53,12 +53,18 @@ Herdr 自带的布局是只读的，所以安装脚本会另外生成一个布�
 
 工作原理：
 - mod 不能使用 Node，所以它只负责显示。数据通过 Herdr 的 `exec` 运行打包在一起的命令行工具获取：
-  上下文每 15 秒刷新一次（`--list --json --recent 48`），订阅用量每 2 分钟刷新一次（`quota --json`；点刷新按钮时会加上 `--refresh`）。
-- 窗格和会话按 agent 和文件夹匹配：当前终端运行的是 Claude Code（或 Codex）时，取这个 agent 的、
-  工作目录与它相同（或包含它、或在它里面）的最新一个会话。
+  上下文每 15 秒刷新一次（`match --json --panes …`），订阅用量每 2 分钟刷新一次（`quota --json`；点刷新按钮时会加上 `--refresh`）。
+- 每个 agent 窗格都对应到它自己的会话（`herdr-context match`），因为同一个文件夹里常常有好几个会话：
+  - Claude Code 会把终端标题设为会话标题，同一个标题也会写进日志（`ai-title` / `custom-title` 记录），
+    所以标题能对上的窗格就精确对应到那个会话。
+  - Codex 给会话命名后（`/rename`，保存在 `session_index.jsonl`）会把名字显示在终端标题里；
+    桌面应用 / IDE、`codex exec` 发起的会话和子 agent 线程不可能运行在窗格里，会被跳过。
+  - 都对不上时：取窗格所在文件夹（或它的上下级文件夹）里最新的、没被别的窗格占用、标题也不属于别的窗口的会话。
+    这时面板会提示这个文件夹还有其他会话；用 `/rename` 给会话命名就能精确对应。
+  - 文件夹和标题信息按文件大小缓存（`~/.cache/herdr-context/session-meta.json`），轮询时只读新增的部分。
   焦点在面板本身时，显示这个标签页里最近聚焦过的终端。没有 agent 的窗格不会借用别人的会话，
   而是列出这个工作区里的 Claude Code 和 Codex agent（点击可跳转过去）；工作区里有多个 agent 时也会显示这个列表。
-  其他 agent 的窗格会显示暂不支持的说明。
+  其他 agent 的窗格会显示暂不支持的说明；还没有成功请求的会话（比如登录过期）也会直接说明。
 - 支持英文和简体中文：点面板右上角的 中/EN 按钮切换（保存在 Herdr 的共享状态里，面板和状态栏小标签一起切换，重启后保留）。
   通用的专业名词在两种语言里都保持英文：tokens、cache、agent、System Prompt、ctx。
 - Claude 的重置时间（如 "Nov 22, 2:20am (Asia/Shanghai)"）按本地时间解析，和其他提供方一样显示为相对时间（"2 小时 5 分后"）。
@@ -77,13 +83,15 @@ node bin/herdr-context.js --agent codex   # 只看一种 agent（claude | codex�
 node bin/herdr-context.js --session 1dea  # 按会话 ID 前缀查找
 node bin/herdr-context.js --cwd ~/work/api
 node bin/herdr-context.js --json          # 给 Herdr mod 或脚本用的 JSON 输出
+node bin/herdr-context.js match --panes '[{"pane":"p1","agent":"claude","cwd":"/work/api","title":"✳ Fix login"}]'
 ```
 
 ### 上下文窗口大小
 
 百分比 = 上下文 token 数 ÷ 模型的上下文窗口大小。窗口大小的来源：
 
-- **Codex** 直接写在日志里（`model_context_window`）。
+- **Codex** 直接写在日志里（`model_context_window`）。百分比用的是 Codex 自己的公式：
+  分子分母都去掉 12k 的固定提示词（`(tokens − 12k) / (window − 12k)`），所以和 Codex 底栏显示的一致。
 - **Claude Code** 的日志里没有，所以按可靠程度依次取：`HERDR_CONTEXT_WINDOW`；statusLine 数据（见下文）；
   出现过超过 200k 的请求（只有 1M 窗口才可能）；否则用 Claude Code 自带的模型表
   （从 Claude Code 程序里读出来的：Opus 4.7 及以后、Sonnet 5 及以后、Haiku 5.5 和 Fable 系列是 1M，更早的是 200k）。
@@ -208,6 +216,7 @@ src/claude/statusline.js   statusLine 数据的保存、读取和规范化
 src/claude/discover.js     查找会话日志
 src/claude/models.js       每个 Claude 模型的上下文窗口大小（来自 Claude Code 的模型表）
 src/codex/                 Codex rollout 日志 → 相同结构的快照
+src/match.js               把每个 Herdr 窗格对应到它自己的会话（终端标题、文件夹）
 src/quota/                 订阅用量：claude（statusLine）、claude-cli（/usage）、claude-direct、
                            codex（日志）、codex-rpc（app-server）、kiro、quota-axi、index（数据源顺序）
 src/herdr-layout.js        根据 Herdr 的 main 布局生成 main-context 布局

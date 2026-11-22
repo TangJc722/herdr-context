@@ -58,15 +58,26 @@ model table); the statusLine collector is optional, see below.
 
 How it works:
 - Mods can't use Node, so the mod only draws. It runs the bundled CLI with
-  Herdr's `exec`: context every 15 s (`--list --json --recent 48`), subscriptions
+  Herdr's `exec`: context every 15 s (`match --json --panes …`), subscriptions
   every 2 min (`quota --json`; the refresh button adds `--refresh`).
-- The pane ↔ session match is by agent and folder: when the focused terminal
-  runs Claude Code (or Codex), that agent's newest session whose folder is its
-  own (or contains it / sits inside it). With the panel itself focused, it
-  describes the tab's last focused terminal. A pane without an agent borrows
-  nothing; the panel lists the space's Claude Code and Codex agents instead
-  (click one to go to it), as it also does whenever a space has several. Other
-  agents' panes say they are not supported yet.
+- Each agent pane is paired with its own session (`herdr-context match`), since
+  several sessions often share a folder:
+  - Claude Code sets the terminal title to the session's title and writes the
+    same title to the log (`ai-title` / `custom-title` records), so a pane whose
+    title matches a session gets exactly that one.
+  - Codex shows a thread's name (`/rename`, kept in `session_index.jsonl`) in
+    the title; sessions from the desktop app / IDE, `codex exec`, and sub-agent
+    threads never run in a pane and are skipped.
+  - Otherwise: the newest session in the pane's folder (or one inside / above
+    it) that is not another pane's and not titled for another window. The panel
+    then says other sessions share the folder; `/rename` the session to pin it.
+  - Folder facts and titles are cached by file size
+    (`~/.cache/herdr-context/session-meta.json`), so polling reads only new bytes.
+  With the panel itself focused, it describes the tab's last focused terminal.
+  A pane without an agent borrows nothing; the panel lists the space's Claude
+  Code and Codex agents instead (click one to go to it), as it also does
+  whenever a space has several. Other agents' panes say they are not supported
+  yet; a session with no reply yet (e.g. signed out) says so.
 - English or Simplified Chinese: the 中/EN button in the panel header (kept in
   Herdr's shared state, so panel and chip switch together and it is remembered).
   Established terms stay English in both: tokens, cache, agent, System Prompt, ctx.
@@ -90,13 +101,16 @@ node bin/herdr-context.js --agent codex   # only one agent (claude | codex)
 node bin/herdr-context.js --session 1dea  # by id prefix
 node bin/herdr-context.js --cwd ~/work/api
 node bin/herdr-context.js --json          # for the Herdr mod / scripts
+node bin/herdr-context.js match --panes '[{"pane":"p1","agent":"claude","cwd":"/work/api","title":"✳ Fix login"}]'
 ```
 
 ### Context-window size
 
 The % is context tokens ÷ the model's context window. Where the window size comes from:
 
-- **Codex** writes it into its log (`model_context_window`).
+- **Codex** writes it into its log (`model_context_window`). The % uses Codex's
+  own formula, which leaves 12k of fixed prompt out of both sides
+  (`(tokens − 12k) / (window − 12k)`), so it matches Codex's footer.
 - **Claude Code** does not, so, most reliable first: `HERDR_CONTEXT_WINDOW`; the
   statusLine payload (below); a prompt larger than 200k (only a 1M window allows
   that); else Claude Code's own model table (read from the Claude Code binary:
@@ -232,6 +246,7 @@ src/claude/statusline.js   statusLine payload save / read / normalize
 src/claude/discover.js     finds session logs
 src/claude/models.js       context window per Claude model (Claude Code's table)
 src/codex/                 Codex rollout logs → the same snapshot shape
+src/match.js               pairs each Herdr pane with its own session (terminal title, folder)
 src/quota/                 subscription usage: claude (statusLine), claude-cli (/usage), claude-direct,
                            codex (logs), codex-rpc (app-server), kiro, quota-axi, index (source order)
 src/herdr-layout.js        builds the main-context layout from Herdr's main

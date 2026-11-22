@@ -290,17 +290,21 @@ test('mod main.js: fetches through the bundled CLI and draws panel and chip', as
 
   // live
   globalThis.__herdr.checking = false;
+  globalThis.__herdr.agents = [{ address: 'tm1', pane: 'p1', space: 's1', tab: 't1', tab_name: '1', title: 'Claude Code', app: 'claude-code', status: 'working' }];
   const m = new Mod();
   const cx = fakeCx();
   m.init({}, cx);
   await cx.settle();
   assert.deepEqual(cx.timers, [15000, 120000]);
   const calls = globalThis.__herdr.execCalls.map((c) => c.slice(2).join(' '));
-  assert.ok(calls.includes('--list --json --limit 12 --recent 48'), calls.join(' | '));
+  const match = calls.find((c) => c.startsWith('match --json --panes '));
+  assert.ok(match, calls.join(' | '));
+  assert.deepEqual(JSON.parse(match.slice('match --json --panes '.length)), [{ pane: 'p1', agent: 'claude', cwd: '/p', title: 'Claude Code' }]);
   assert.ok(calls.includes('quota --json'), calls.join(' | '));
   assert.equal(m.error, null);
   assert.equal(m.quotaError, null);
-  assert.equal(m.sessions.length, 1);
+  assert.deepEqual(Object.keys(m.sessions), ['p1']);
+  assert.equal(m.sessions.p1.how, 'folder');
 
   const panel = texts(m.render());
   const odd = panel.filter((s) => typeof s !== "string"); assert.deepEqual(odd, [], "non-text children: " + odd.map(String).join(","));
@@ -308,11 +312,22 @@ test('mod main.js: fetches through the bundled CLI and draws panel and chip', as
     assert.ok(panel.some((s) => s.includes(want)), `panel shows ${want}: ${JSON.stringify(panel)}`);
   }
   assert.ok(panel.includes('1.3k'), 'context tokens (1305) without a window size');
+  // matched by folder with other sessions there: says it is the newest
+  m.sessions.p1.others = 2;
+  assert.ok(texts(m.render()).some((x) => x.startsWith('2 other session(s) use this folder')));
+  m.sessions.p1.others = 0;
+  // a session that never got a reply (e.g. signed out)
+  const real = m.sessions.p1.session;
+  m.sessions.p1.session = { ...real, requestCount: 0, context: { tokens: null, window: null, percent: null } };
+  assert.ok(texts(m.render()).includes('No request has gone through in this session yet (signed out?).'));
+  m.sessions.p1.session = real;
 
   // another folder: explains instead of showing the wrong session
   globalThis.__herdr.focused = { cwd: '/elsewhere' };
   globalThis.__herdr.panes = [{ pane: 'p2', terminal: 'tm2', tab: 't1', focused: true, cwd: '/elsewhere', app: 'codex' }];
-  assert.ok(texts(m.render()).includes('codex: no session log for this folder in the last 48 hours yet.'));
+  assert.ok(texts(m.render()).includes('Loading…'), 'not matched yet: waits for the next poll');
+  m.sessions.p2 = { pane: 'p2', agent: 'codex', how: null, others: 0, session: null };
+  assert.ok(texts(m.render()).includes('codex: no session log for this folder yet.'));
   globalThis.__herdr.panes = [{ pane: 'p2', terminal: 'tm2', tab: 't1', focused: true, cwd: '/elsewhere', app: 'cursor-agent' }];
   assert.ok(texts(m.render()).includes('cursor-agent: the context view supports Claude Code and Codex for now.'));
 
@@ -332,7 +347,6 @@ test('mod main.js: fetches through the bundled CLI and draws panel and chip', as
   globalThis.__herdr.runCalls = [];
   agentClick(m.render())();
   assert.deepEqual(globalThis.__herdr.runCalls, [['agent.focus', { terminal: 'tm1' }]]);
-  globalThis.__herdr.agents = [];
 
   // the panel itself focused (what clicking it does): still shows the tab's terminal
   globalThis.__herdr.focused = { tab: 't1', pane: 'pm', terminal: null, cwd: null };
