@@ -6,10 +6,17 @@
 //   conversation_id, title, workspace_uris (JSON array of file:/// URIs),
 //   last_modified_time, parent_conversation_id, nesting_depth, ...
 // - brain/<id>/.system_generated/logs/transcript.jsonl: one line per step,
-//   {step_index, source: USER_EXPLICIT|MODEL|..., type, status, created_at,
-//   model, input_tokens, cache_read_tokens, output_tokens, content, ...}.
+//   {step_index, source, type, status, created_at, content, ...}:
+//     USER_EXPLICIT / USER_INPUT     the user's message (wrapped in <USER_REQUEST>)
+//     MODEL / PLANNER_RESPONSE       a model call: model, input_tokens,
+//                                    cache_read_tokens, output_tokens, content,
+//                                    thinking, tool_calls [{name, args}] (each arg
+//                                    value is itself JSON text: "\"C:/x/a.js\"")
+//     MODEL / GENERIC                a tool's result (status ERROR + error when it failed)
+//     SYSTEM / ERROR_MESSAGE         API errors (retries): not context
 //   input_tokens excludes the cached part, so a request's prompt is
-//   input_tokens + cache_read_tokens.
+//   input_tokens + cache_read_tokens. Tools seen: read_file, write_file,
+//   edit_file, run_command.
 // - conversations/<id>.db (SQLite), table gen_metadata: one protobuf blob per
 //   model call. No schema is published; field 1.9.10 holds agy's own context
 //   accounting: .1 = tokens in context, .4 = its context limit (256000 for
@@ -23,6 +30,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import { estimateTokens, IMAGE_TOKENS_ESTIMATE } from '../estimate.js';
 
 export function agyDir(env = process.env) {
   return env.AGY_DATA_DIR ? path.resolve(env.AGY_DATA_DIR) : path.join(os.homedir(), '.gemini', 'antigravity-cli');
@@ -182,6 +190,56 @@ export function agyContextLog(dbFile) {
 
 // ---------- the snapshot ----------
 
+const CATEGORIES = ['user', 'assistant', 'toolUse', 'toolResult'];
+const PATH_ARGS = ['Path', 'AbsolutePath', 'TargetFile', 'FilePath', 'File', 'path', 'file_path'];
+
+/** A tool argument's value: agy writes each one as JSON text ("\"C:/x\""). */
+export function agyArg(v) {
+  if (typeof v !== 'string') return v;
+  const s = v.trim();
+  if (!/^["{[]/.test(s)) return v;
+  try {
+    return JSON.parse(s);
+  } catch {
+    return v;
+  }
+}
+
+/** What a tool call did to a file: "read" | "write" | "edit" | null. */
+export function agyFileKind(name) {
+  const n = String(name ?? '').toLowerCase();
+  if (/(^|_)(write|create)(_|$)/.test(n)) return 'write';
+  if (/(^|_)(edit|replace|patch|modify)(_|$)/.test(n)) return 'edit';
+  if (/(^|_)(read|view|open)(_|$)/.test(n)) return 'read';
+  return null;
+}
+
+const userText = (s) => String(s ?? '').replace(/^\s*<USER_REQUEST>\s*/, '').replace(/\s*<\/USER_REQUEST>[\s\S]*$/, '');
+
+/** The context split into categories: measured total, estimated split (as for Codex). */
+export function agyComposition(total, baseline, segment) {
+  if (!total) return null;
+  const fixed = Math.min(baseline ?? 0, total);
+  const rest = total - fixed;
+  const estSum = CATEGORIES.reduce((n, c) => n + segment[c], 0);
+  const parts = [{ category: 'systemAndTools', tokens: fixed }];
+  if (!estSum) {
+    parts.push({ category: 'unattributed', tokens: rest });
+  } else {
+    const raw = CATEGORIES.map((c) => (rest * segment[c]) / estSum);
+    const whole = raw.map(Math.floor);
+    let left = rest - whole.reduce((a, b) => a + b, 0);
+    raw.map((x, i) => [x - whole[i], i]).sort((a, b) => b[0] - a[0]).forEach(([, i]) => {
+      if (left > 0) {
+        whole[i]++;
+        left--;
+      }
+    });
+    CATEGORIES.forEach((c, i) => parts.push({ category: c, tokens: whole[i] }));
+  }
+  return { total, estimated: true, parts: parts.filter((p) => p.tokens > 0), topTools: null };
+}
+
 /** Snapshot of one agy conversation (same shape as loadClaudeSession's). */
 export function loadAgySession(conv) {
   let text = '';
@@ -190,10 +248,20 @@ export function loadAgySession(conv) {
   } catch {}
   const requests = [];
   const totals = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0, thinking: 0 };
+  const segment = Object.fromEntries(CATEGORIES.map((c) => [c, 0])); // estimated, all steps so far
+  const tools = new Map();
+  const files = new Map();
+  let baseline = null;
   let model = null;
   let firstTs = null;
   let lastTs = null;
   let malformed = 0;
+  const touch = (p, kind, ts) => {
+    const f = files.get(p) || { read: 0, edit: 0, write: 0, lastTs: null };
+    f[kind]++;
+    f.lastTs = ts || f.lastTs;
+    files.set(p, f);
+  };
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
     let r;
@@ -207,14 +275,37 @@ export function loadAgySession(conv) {
       firstTs ??= r.created_at;
       lastTs = r.created_at;
     }
-    if (typeof r.input_tokens !== 'number' && typeof r.cache_read_tokens !== 'number') continue;
-    const input = r.input_tokens || 0;
-    const cacheRead = r.cache_read_tokens || 0;
-    totals.input += input;
-    totals.cacheRead += cacheRead;
-    totals.output += r.output_tokens || 0;
-    if (r.model) model = r.model;
-    requests.push({ prompt: input + cacheRead, ts: r.created_at ?? null });
+    if (r.source === 'SYSTEM') continue; // API errors and retries: never sent as context
+    if (r.type === 'USER_INPUT') {
+      segment.user += estimateTokens(userText(r.content)) + (Array.isArray(r.media) ? r.media.length * IMAGE_TOKENS_ESTIMATE : 0);
+      continue;
+    }
+    if (r.type === 'PLANNER_RESPONSE' || typeof r.input_tokens === 'number') {
+      const input = r.input_tokens || 0;
+      const cacheRead = r.cache_read_tokens || 0;
+      const prompt = input + cacheRead;
+      // the first prompt minus the conversation so far is agy's fixed part (system prompt + tools)
+      if (baseline === null && prompt) baseline = Math.max(0, prompt - CATEGORIES.reduce((n, c) => n + segment[c], 0));
+      totals.input += input;
+      totals.cacheRead += cacheRead;
+      totals.output += r.output_tokens || 0;
+      if (r.model) model = r.model;
+      if (prompt) requests.push({ prompt, ts: r.created_at ?? null });
+      segment.assistant += estimateTokens(r.content);
+      for (const call of Array.isArray(r.tool_calls) ? r.tool_calls : []) {
+        const name = String(call?.name ?? 'tool');
+        tools.set(name, (tools.get(name) ?? 0) + 1);
+        segment.toolUse += estimateTokens(name) + estimateTokens(call?.args ?? '');
+        const kind = agyFileKind(name);
+        const args = call?.args && typeof call.args === 'object' ? call.args : {};
+        const key = PATH_ARGS.find((k) => args[k] != null);
+        const p = key ? agyArg(args[key]) : null;
+        if (kind && typeof p === 'string' && p) touch(p, kind, r.created_at);
+      }
+      continue;
+    }
+    // a tool's result (MODEL / GENERIC), or an error it returned
+    segment.toolResult += estimateTokens(r.content ?? '') + estimateTokens(r.error ?? '');
   }
   const ctxLog = agyContextLog(conv.db);
   const ownLast = [...ctxLog].reverse().find((c) => c.tokens != null) ?? null;
@@ -224,6 +315,11 @@ export function loadAgySession(conv) {
   const tokens = ownLast?.tokens ?? requests[requests.length - 1]?.prompt ?? null;
   const trend = ctxLog.length === requests.length && ctxLog.every((c) => c.tokens != null) ? ctxLog.map((c) => c.tokens) : requests.map((q) => q.prompt);
   const promptAll = totals.input + totals.cacheRead;
+  const cwd = conv.cwd ? String(conv.cwd).replace(/\\/g, '/').replace(/\/+$/, '') : null;
+  const rel = (p) => {
+    const s = String(p).replace(/\\/g, '/');
+    return cwd && s.toLowerCase().startsWith(cwd.toLowerCase() + '/') ? s.slice(cwd.length + 1) : p;
+  };
   return {
     agent: 'agy',
     sessionId: conv.id,
@@ -246,9 +342,11 @@ export function loadAgySession(conv) {
     trend: trend.slice(-40),
     totals: { ...totals, cacheHitRate: promptAll ? totals.cacheRead / promptAll : null },
     compactions: [],
-    composition: null,
-    files: [],
-    tools: {},
+    composition: agyComposition(tokens, baseline, segment),
+    files: [...files.entries()]
+      .map(([p, f]) => ({ path: rel(p), ...f }))
+      .sort((a, b) => b.edit + b.write - (a.edit + a.write) || b.read - a.read),
+    tools: Object.fromEntries([...tools.entries()].sort((a, b) => b[1] - a[1])),
     cost: null,
     sidechain: { requests: 0, promptTokens: 0, outputTokens: 0 },
     subagents: [],

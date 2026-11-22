@@ -104,6 +104,37 @@ test("agy conversation: agy's own context count and limit; transcript totals; su
   assert.deepEqual([n.context.tokens, n.context.window, n.context.percent], [6000, null, null]);
 });
 
+test('agy makeup, files and tools: tool calls (JSON-text args), tool results, API errors left out', () => {
+  const dir = agyHome();
+  const W = path.join(tmp(), 'proj');
+  conv(dir, 't', { cwd: W, modified: '2026-11-22T13:27:14Z', steps: [] });
+  const P = (f) => JSON.stringify(path.join(W, f).replace(/\\/g, '/'));
+  const at = '2026-11-22T13:27:00Z';
+  const lines = [
+    { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', created_at: at, content: '<USER_REQUEST>\nfix app.js\n</USER_REQUEST>\n<ADDITIONAL_METADATA>x</ADDITIONAL_METADATA>' },
+    { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', created_at: at, model: 'gemini-3.8-flash-high', input_tokens: 10000, cache_read_tokens: 0, output_tokens: 400, thinking: 'hmm',
+      tool_calls: [{ name: 'read_file', args: { Path: P('app.js') } }, { name: 'read_file', args: { Path: P('notes.txt') } }] },
+    { step_index: 2, source: 'MODEL', type: 'GENERIC', status: 'DONE', created_at: at, content: 'x'.repeat(4000) },
+    { step_index: 3, source: 'SYSTEM', type: 'ERROR_MESSAGE', status: 'DONE', created_at: at, error: 'API error (attempt 1): UNAVAILABLE (code 503)' },
+    { step_index: 4, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', created_at: at, model: 'gemini-3.8-flash-high', input_tokens: 2000, cache_read_tokens: 9000, output_tokens: 300,
+      tool_calls: [{ name: 'edit_file', args: { Path: P('app.js'), Target: '"a - b"', Replacement: '"a + b"' } }, { name: 'write_file', args: { Path: P('summary.txt'), Content: '"alpha"' } }] },
+    { step_index: 5, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', created_at: at, model: 'gemini-3.8-flash-high', input_tokens: 500, cache_read_tokens: 11000, output_tokens: 50,
+      tool_calls: [{ name: 'run_command', args: { CommandLine: '"Get-ChildItem -Name"' } }] },
+    { step_index: 6, source: 'MODEL', type: 'GENERIC', status: 'ERROR', created_at: at, error: 'permission check failed', content: 'denied' },
+  ];
+  fs.writeFileSync(listAgyConversations(dir)[0].transcript, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+  const s = loadAgySession(listAgyConversations(dir)[0]);
+  assert.equal(s.requestCount, 3, 'the API error is not a request');
+  assert.deepEqual(s.tools, { read_file: 2, edit_file: 1, write_file: 1, run_command: 1 });
+  assert.deepEqual(s.files.map((f) => [f.path, f.read, f.edit, f.write]), [['app.js', 1, 1, 0], ['summary.txt', 0, 0, 1], ['notes.txt', 1, 0, 0]]);
+  const c = s.composition;
+  assert.equal(c.total, 11500, 'no gen_metadata: the last prompt (500 + 11000)');
+  assert.equal(c.parts.reduce((n, p) => n + p.tokens, 0), c.total);
+  const by = Object.fromEntries(c.parts.map((p) => [p.category, p.tokens]));
+  assert.ok(by.systemAndTools > 9000 && by.systemAndTools < 10000, 'first prompt minus the user message');
+  assert.ok(by.toolResult > by.toolUse && by.toolUse > 0 && by.user > 0);
+});
+
 test('agy panes: the conversation a running agy holds open ("live"), else its last one in the folder, else the newest', () => {
   const dir = agyHome();
   const base = tmp();
@@ -174,7 +205,19 @@ test('agy quota: runs `agy -p /usage` in its own empty folder, caches 10 min; pa
   assert.match(calls[0][2], /agy-probe$/);
   assert.equal(agyQuota({ run, env, now: NOW + 60e3 }).source, 'agy /usage (cached)');
   assert.equal(calls.length, 1);
-  assert.equal(agyQuota({ run: () => ({ notFound: true }), env: { XDG_CACHE_HOME: tmp() }, now: NOW }).status, 'not_found');
+  assert.equal(agyQuota({ run: () => ({ notFound: true }), env: { XDG_CACHE_HOME: tmp() }, now: NOW, exists: () => false }).status, 'not_found');
+  // not on PATH (a program started before agy was installed): its install folder
+  const seen = [];
+  const local = agyQuota({
+    run: (cmd) => (seen.push(cmd), cmd === 'agy' ? { notFound: true } : { ok: true, stdout: USAGE_JSON, stderr: '' }),
+    env: { XDG_CACHE_HOME: tmp(), LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local' }, now: NOW, platform: 'win32', exists: () => true,
+  });
+  assert.deepEqual([local.status, seen], ['ok', ['agy', 'C:\\Users\\u\\AppData\\Local\\agy\\bin\\agy.exe']]);
+  // a failed check keeps the last reading and says why
+  const failed = agyQuota({ run: () => ({ ok: false, stdout: '{"status":"ERROR","error":"Eligibility check failed: EOF","num_turns":0}', stderr: '' }), env, now: NOW + 3600e3, refresh: true });
+  assert.deepEqual([failed.status, failed.windows.length, failed.source], ['ok', 2, 'agy /usage (last reading)']);
+  assert.match(failed.message, /now: could not read agy \/usage output: Eligibility check failed: EOF/);
+  assert.equal(agyQuota({ run: () => ({ ok: false, stdout: '', stderr: 'boom' }), env: { XDG_CACHE_HOME: tmp() }, now: NOW }).status, 'error');
   // passive: an earlier reading, never a new run
   assert.equal(agyBest({ active: false, env, now: NOW + 86400e3, agy: { run: () => assert.fail('ran agy') } }).status, 'ok');
   assert.equal(agyBest({ active: false, env: { XDG_CACHE_HOME: tmp() }, now: NOW }), null);

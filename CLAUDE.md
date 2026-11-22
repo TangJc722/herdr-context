@@ -46,8 +46,10 @@ Codex logs (`$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl[.zst]`):
 
 Antigravity CLI `agy` (`~/.gemini/antigravity-cli`; Herdr calls the pane's app "antigravity"):
 - Conversations: `conversation_summaries.db` (workspace_uris = file:/// URIs, parent /
-  nesting_depth for sub-conversations); steps with tokens in
-  `brain/<id>/.system_generated/logs/transcript.jsonl` (`input_tokens` excludes `cache_read_tokens`).
+  nesting_depth for sub-conversations); steps in
+  `brain/<id>/.system_generated/logs/transcript.jsonl`: USER_INPUT, PLANNER_RESPONSE (tokens,
+  `tool_calls` whose arg values are JSON text, e.g. `"\"C:/x/a.js\""`), GENERIC (tool result),
+  SYSTEM/ERROR_MESSAGE (API retry: not context). `input_tokens` excludes `cache_read_tokens`.
 - agy's own context count/limit is protobuf field 1.9.10 (.1 tokens, .4 limit = 256000 for
   Gemini 3.8 Flash, not the model's 1M) in `conversations/<id>.db` → `gen_metadata`. No
   published schema: decoded by field number only.
@@ -56,6 +58,11 @@ Antigravity CLI `agy` (`~/.gemini/antigravity-cli`; Herdr calls the pane's app "
   Windows only. Lock files stay behind after agy exits.
 - Quota: `agy -p "/usage" --output-format json` answers locally (num_turns 0, zero tokens,
   no conversation), ~10 s. Don't use Antigravity's internal quota endpoints (account risk).
+  agy installs to `%LOCALAPPDATA%\agy\bin` and adds it to the *user* PATH: Herdr started
+  earlier doesn't see it, so fall back to that path. Its "Eligibility check failed … EOF"
+  is a network failure: keep the last reading.
+- Sample tool data: `agy -p "<task>" --mode accept-edits` in a scratch folder (headless
+  mode auto-denies shell commands). Not `--dangerously-skip-permissions`.
 
 Matching panes to sessions: several sessions share a folder all the time. Never pick
 "newest in the folder" without title evidence; when guessing, the panel says so.

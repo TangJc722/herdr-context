@@ -195,8 +195,9 @@ Kiro 的注意事项：它没有公开的 API，输出格式一旦变化，解�
 
 Antigravity：`/usage` 是 agy 自己的命令。在打印模式下它直接在本地返回结果
 （不调用模型、不消耗 token、不保存会话），每个模型组（Gemini；Claude 和 GPT）各一个每周额度，以剩余比例表示。
-每次大约 10 秒，所以结果会缓存；`--passive` 只显示之前的结果。已在 2026 年 11 月的 agy CLI 上验证。
-不使用 Antigravity 的内部额度接口。
+每次大约 10 秒，所以结果会缓存；`--passive` 只显示之前的结果。查询失败时（网络、登录）沿用上一次的结果，并注明原因。
+`agy` 不在 PATH 里时（在 agy 安装之前就已启动的程序，比如 Herdr，用的还是旧的 PATH），会去它的安装目录
+`%LOCALAPPDATA%\agy\bin` 找。已在 2026 年 11 月的 agy CLI 上验证。不使用 Antigravity 的内部额度接口。
 
 ## 每个数字从哪里来
 
@@ -235,7 +236,8 @@ Antigravity（`~/.gemini/antigravity-cli`，或 `AGY_DATA_DIR`），已在 2026 
 | 会话列表、文件夹 | `conversation_summaries.db`（SQLite，只读）；子会话不计入 | 实测 |
 | token 总量、趋势（备用） | `brain/<id>/.system_generated/logs/transcript.jsonl`：每个模型步骤的 `input_tokens` + `cache_read_tokens` | 实测 |
 | 上下文 token 数、窗口大小 | agy 自己的统计，在 `conversations/<id>.db` 的 `gen_metadata` 里（protobuf 字段 1.9.10：token 数和上限，比如 Gemini 3.8 Flash 是 256k）；没有时用最后一次请求的大小，不显示百分比 | 按字段解码，没有公开的结构定义 |
-| 组成拆分、文件、工具 | 暂未读取 | — |
+| 组成拆分 | transcript 里的各个步骤（你的消息、回复、`tool_calls`、工具结果），和 Codex 一样按估算的文本大小拆分；第一次请求减去当时已有的对话算作"system + tools"；API 错误步骤不计入 | **估算** |
+| 文件、工具 | `tool_calls` 里的工具名；文件取自 `read_file` / `write_file` / `edit_file` 的路径参数 | 实测 |
 
 ## 目录结构
 
@@ -270,4 +272,5 @@ test/                      node --test 测试，使用合成的样本数据和�
 3. **订阅用量**：已完成（Claude 的 statusLine / `/usage` / 直连模式，Codex 的日志 / app-server，Antigravity 的 `/usage`，Kiro，quota-axi）。
    下一步：用真实输出验证 Claude `/usage` 文本和 Kiro；不依赖 quota-axi 支持 Cursor。
 4. Cursor 上下文分析：调研它的 CLI 在本地留下了哪些数据。
-5. **Antigravity 上下文分析**：token 数、窗口大小和窗格匹配已完成。下一步：从 transcript 里读出组成拆分、文件和工具。
+5. **Antigravity 上下文分析**：已完成（token 数、窗口大小、组成拆分、文件、工具、窗格匹配）。
+   下一步：遇到新的工具名时补上；识别 shell 命令里的读文件操作。

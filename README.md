@@ -229,7 +229,10 @@ checked against a live kiro-cli**.
 Antigravity: `/usage` is agy's own command. In print mode it answers locally
 (no model call, no tokens, no conversation saved) with one weekly bucket per
 model group (Gemini; Claude and GPT), as remaining fractions. It takes about
-10 s, hence the cache; `--passive` shows only an earlier reading. Checked against
+10 s, hence the cache; `--passive` shows only an earlier reading. A failed check
+(network, sign-in) keeps the last reading and says why. When `agy` is not on
+PATH (a program started before agy was installed, such as Herdr, keeps the old
+PATH), its install folder `%LOCALAPPDATA%\agy\bin` is tried. Checked against
 the agy CLI of 2026-11. Antigravity's internal quota endpoints are not used.
 
 ## Where each number comes from
@@ -271,7 +274,8 @@ Antigravity (`~/.gemini/antigravity-cli`, or `AGY_DATA_DIR`), checked against th
 | Conversations, folder | `conversation_summaries.db` (SQLite, read-only); sub-conversations left out | measured |
 | Token totals, trend fallback | `brain/<id>/.system_generated/logs/transcript.jsonl`: `input_tokens` + `cache_read_tokens` per model step | measured |
 | Context tokens, window | agy's own accounting in `conversations/<id>.db` → `gen_metadata` (protobuf field 1.9.10: tokens, limit, e.g. 256k for Gemini 3.8 Flash); without it, the last prompt and no % | decoded without a published schema |
-| Makeup, files, tools | not read yet | — |
+| Makeup | transcript steps (your messages, replies, `tool_calls`, tool results) split by estimated size as for Codex; the first prompt minus the conversation so far is "system + tools"; API-error steps left out | **estimate** |
+| Files, tools | `tool_calls` names; files from `read_file` / `write_file` / `edit_file` path arguments | measured |
 
 ## Layout
 
@@ -306,4 +310,5 @@ test/                      node --test, synthetic fixtures; a fake codex app-ser
 3. **Quota**: done (Claude statusLine / `/usage` / direct, Codex logs / app-server, Antigravity `/usage`, Kiro, quota-axi).
    Next: verify Claude `/usage` text and Kiro against live reports; Cursor without quota-axi.
 4. Cursor context: research what its CLI leaves on disk.
-5. **Antigravity context**: tokens, window and matching done. Next: makeup, files and tools from the transcript.
+5. **Antigravity context**: done (tokens, window, makeup, files, tools, pane matching).
+   Next: more tool names as they turn up; reads by shell commands.

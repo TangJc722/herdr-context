@@ -71,7 +71,17 @@ export function agyProbeDir(env = process.env) {
   return path.join(quotaCacheDir(env), 'agy-probe');
 }
 
-export function agyQuota({ run = runCommand, env = process.env, now = Date.now(), refresh = false, timeoutMs = 45000 } = {}) {
+/**
+ * Where agy's installer puts it, for when it is not on PATH: a program started
+ * before agy was installed (Herdr, say) still has the old PATH.
+ */
+export function agyInstalled({ env = process.env, platform = process.platform, exists = fs.existsSync } = {}) {
+  const local = env.LOCALAPPDATA;
+  const f = platform === 'win32' && local ? path.win32.join(local, 'agy', 'bin', 'agy.exe') : null;
+  return f && exists(f) ? f : null;
+}
+
+export function agyQuota({ run = runCommand, env = process.env, now = Date.now(), refresh = false, timeoutMs = 45000, platform = process.platform, exists } = {}) {
   if (!refresh) {
     const c = readCache('agy', CACHE_TTL_MS, { env, now });
     if (c) return { ...c, source: 'agy /usage (cached)' };
@@ -80,13 +90,22 @@ export function agyQuota({ run = runCommand, env = process.env, now = Date.now()
   try {
     fs.mkdirSync(cwd, { recursive: true });
   } catch {}
-  const r = run('agy', ['-p', '/usage', '--output-format', 'json'], { timeoutMs, env, cwd });
+  const args = ['-p', '/usage', '--output-format', 'json'];
+  let r = run('agy', args, { timeoutMs, env, cwd });
+  const installed = r.notFound ? agyInstalled({ env, platform, exists }) : null;
+  if (installed) r = run(installed, args, { timeoutMs, env, cwd });
   if (r.notFound) return quota('agy', 'agy /usage', { status: 'not_found', message: 'agy (Antigravity CLI) is not installed' });
-  if (r.timedOut) return quota('agy', 'agy /usage', { status: 'error', message: 'agy /usage timed out' });
+  // a failed check (network, sign-in) keeps the last reading, with the reason
+  const lastOr = (message) => {
+    const c = readCache('agy', Infinity, { env, now });
+    return c ? { ...c, source: 'agy /usage (last reading)', message: `now: ${message}` } : quota('agy', 'agy /usage', { status: 'error', message });
+  };
+  if (r.timedOut) return lastOr('agy /usage timed out');
   const parsed = parseAgyUsage(`${r.stdout}\n${r.stderr}`);
   if (!parsed || !parsed.windows.length) {
+    const why = (r.stdout + r.stderr).match(/"error":"((?:[^"\\]|\\.)*)"/)?.[1] ?? r.stderr.split('\n')[0];
     const hint = /log ?in|sign ?in|auth/i.test(r.stderr + r.stdout) ? ' (signed in? run `agy` once)' : '';
-    return quota('agy', 'agy /usage', { status: 'error', message: `could not read agy /usage output${hint}` });
+    return lastOr(`could not read agy /usage output${hint}${why ? `: ${why.replace(/\\"/g, '"').slice(0, 160)}` : ''}`);
   }
   const result = quota('agy', 'agy /usage', { observedAt: new Date(now).toISOString(), windows: parsed.windows });
   writeCache('agy', result, { env, now });
