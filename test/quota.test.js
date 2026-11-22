@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
-import { claudeQuota } from '../src/quota/claude.js';
+import { claudeQuota, claudePlan } from '../src/quota/claude.js';
 import { codexQuota, lastRateLimits } from '../src/quota/codex.js';
 import { parseKiroUsage, kiroQuota } from '../src/quota/kiro.js';
 import { mapQuotaAxi, quotaAxi } from '../src/quota/quota-axi.js';
@@ -231,4 +231,28 @@ test('collectQuotas: local sources first, quota-axi fills gaps and adds provider
 
   const noAxi = await collectQuotas({ active: false, env: { XDG_CACHE_HOME: tmp() }, claude: { dir: sl, now: NOW }, codex: { home: tmp() }, kiro: { run: fake({}), env: { XDG_CACHE_HOME: tmp() } }, axi: false });
   assert.deepEqual(noAxi.providers.map((p) => p.provider), ['claude', 'codex', 'kiro']);
+});
+
+test("claude plan: from Claude Code's config (oauthAccount.organizationType), shown with the usage", async () => {
+  const dir = tmp();
+  const write = (account) => fs.writeFileSync(path.join(dir, '.claude.json'), JSON.stringify({ numStartups: 3, oauthAccount: account }));
+  write({ organizationType: 'claude_pro', billingType: 'stripe_subscription' });
+  assert.equal(claudePlan({ env: { CLAUDE_CONFIG_DIR: dir } }), 'pro');
+  write({ organizationType: 'claude_max' });
+  assert.equal(claudePlan({ file: path.join(dir, '.claude.json') }), 'max');
+  write({ organizationType: '' });
+  assert.equal(claudePlan({ env: { CLAUDE_CONFIG_DIR: dir } }), null);
+  assert.equal(claudePlan({ env: { CLAUDE_CONFIG_DIR: tmp() } }), null, 'no config file');
+
+  write({ organizationType: 'claude_pro' });
+  const sl = tmp();
+  writeStatusline({ session_id: 's1', rate_limits: { five_hour: { used_percentage: 45, resets_at: S(2) } } }, sl, new Date(NOW));
+  const r = await collectQuotas({
+    now: NOW, active: false, axi: false, env: { XDG_CACHE_HOME: tmp() },
+    claude: { dir: sl, now: NOW }, claudeAccount: { file: path.join(dir, '.claude.json') },
+    codex: { home: tmp() }, kiro: { run: fake({}), env: { XDG_CACHE_HOME: tmp() } },
+  });
+  const c = r.providers.find((p) => p.provider === 'claude');
+  assert.deepEqual([c.status, c.plan], ['ok', 'pro']);
+  assert.match(renderQuotas(r), /claude .*\[pro\]/);
 });

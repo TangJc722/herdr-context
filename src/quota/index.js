@@ -9,7 +9,7 @@
 //   others: quota-axi, which also stands in when a source above has nothing.
 // `active: false` (CLI --passive) never starts claude/codex processes.
 // `refresh: true` skips freshness checks and caches.
-import { claudeQuota } from './claude.js';
+import { claudeQuota, claudePlan } from './claude.js';
 import { claudeDirectQuota } from './claude-direct.js';
 import { claudeCliQuota } from './claude-cli.js';
 import { codexQuota } from './codex.js';
@@ -38,6 +38,12 @@ async function cached(name, ttlMs, probe, { refresh, env, now }) {
 }
 
 export async function claudeBest(o = {}) {
+  const q = await claudeSources(o);
+  // only the direct source knows the plan; the others get it from Claude Code's config
+  return q.plan ? q : { ...q, plan: claudePlan({ env: o.env ?? process.env, ...o.account }) };
+}
+
+async function claudeSources(o) {
   const { refresh = false, active = true, direct = false, now = Date.now(), env = process.env } = o;
   const notes = [];
   if (direct) {
@@ -69,7 +75,7 @@ export async function codexBest(o = {}) {
 export async function collectQuotas(opts = {}) {
   const common = { refresh: opts.refresh, active: opts.active, now: opts.now, env: opts.env };
   const own = [
-    await claudeBest({ ...common, direct: !!opts.direct, directOpts: opts.claudeDirect, statusline: opts.claude, cli: opts.claudeCli }),
+    await claudeBest({ ...common, direct: !!opts.direct, directOpts: opts.claudeDirect, statusline: opts.claude, cli: opts.claudeCli, account: opts.claudeAccount }),
     await codexBest({ ...common, logs: opts.codex, rpc: opts.codexRpc }),
     kiroQuota({ refresh: opts.refresh, ...opts.kiro }),
   ];

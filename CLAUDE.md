@@ -57,4 +57,7 @@ bundled CLI; shipped layouts are read-only (hence the `main-context` layout);
 
 Claude quota: `claude -p "/usage"` prints one line per limit
 ("Current week (all models): 47% used · resets Nov 25, 9am (Asia/Shanghai)").
+Neither statusLine nor `/usage` names the plan: it is `oauthAccount.organizationType`
+("claude_pro") in `~/.claude.json` (no credentials there; `.credentials.json` has
+`subscriptionType` too, but holds tokens: don't read it for this).
 Kiro's `/usage` format is unverified against a real kiro-cli.

@@ -158,6 +158,8 @@ Subscription usage
 
 某个数据源失败时，会继续尝试下一个，并显示失败原因；上面的数据源都没有数据时，quota-axi 也会补上。
 重置时间已过的窗口不会被当作当前数据显示，而是标记为 `stale`。
+套餐标签（`[pro]`、`[plus]` 等）：Codex 和 Kiro 随用量数据一起返回；Claude 的从 Claude Code 自己的配置里读取
+（`~/.claude.json` 或 `$CLAUDE_CONFIG_DIR` 下同名文件里的 `oauthAccount.organizationType`），这个文件里没有登录凭证。
 
 `claude /usage` 查询使用 `--no-session-persistence --tools "" --strict-mcp-config` 运行，
 同时禁用 hook 和 Remote Control，并在一个空目录里执行，所以不会写入会话记录，也不会启动 MCP 服务器。

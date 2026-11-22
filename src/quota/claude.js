@@ -5,7 +5,11 @@
 // last API response, so an idle session holds an older reading. Within one
 // window (identified by its reset time) usage only rises, so the highest
 // reading for the latest reset time is the most recent truth.
+//
+// The plan name comes from Claude Code's global config (claudePlan below),
+// since neither the statusLine payload nor `/usage` carries it.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { cacheDir, normalizeStatusline } from '../claude/statusline.js';
 import { quota, toIso, isExpired } from './common.js';
@@ -67,4 +71,20 @@ export function claudeQuota({ dir = cacheDir(), now = Date.now() } = {}) {
     });
   }
   return quota('claude', 'claude-statusline', { observedAt, windows });
+}
+
+/**
+ * The signed-in plan ("pro", "max", ...) from Claude Code's global config,
+ * $CLAUDE_CONFIG_DIR/.claude.json or ~/.claude.json: oauthAccount.organizationType
+ * ("claude_pro"). That file holds no credentials. null when unknown.
+ */
+export function claudePlan({ env = process.env, file } = {}) {
+  const f = file ?? path.join(env.CLAUDE_CONFIG_DIR || os.homedir(), '.claude.json');
+  try {
+    const t = JSON.parse(fs.readFileSync(f, 'utf8'))?.oauthAccount?.organizationType;
+    if (typeof t !== 'string') return null;
+    return t.replace(/^claude_/, '').replace(/_/g, ' ').trim() || null;
+  } catch {
+    return null;
+  }
 }

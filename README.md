@@ -185,6 +185,9 @@ otherwise the agent's own command is asked (results cached):
 If a source fails, the next one is tried and the reason is shown; quota-axi also
 stands in when a source above has nothing. Windows whose reset time has passed
 are dropped (shown as `stale`) rather than shown as current.
+The plan tag (`[pro]`, `[plus]`, …) comes with the data for Codex and Kiro; for
+Claude it is read from Claude Code's own config (`oauthAccount.organizationType`
+in `~/.claude.json`, or under `$CLAUDE_CONFIG_DIR`), which holds no credentials.
 
 The `claude /usage` probe runs with `--no-session-persistence --tools "" --strict-mcp-config`,
 hooks and Remote Control disabled, in an empty directory, so it writes no session
