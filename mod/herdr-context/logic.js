@@ -20,7 +20,7 @@ const SPARK = "▁▂▃▄▅▆▇█";
  *  and lower case for Windows drive paths (which are case-insensitive). */
 export function normPath(p) {
   if (!p || typeof p !== "string") return null;
-  let s = p.replace(/\\/g, "/");
+  let s = p.replace(/^[\\/]{2}\?[\\/]UNC[\\/]/i, "//").replace(/^[\\/]{2}\?[\\/]/, "").replace(/\\/g, "/");
   if (s.length > 1) s = s.replace(/\/+$/, "");
   if (/^[a-zA-Z]:\//.test(s) || /^[a-zA-Z]:$/.test(s)) s = s.toLowerCase();
   return s;

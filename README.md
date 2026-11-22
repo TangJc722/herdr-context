@@ -68,15 +68,17 @@ How it works:
   - Codex's title is "<thread name> | <project>" (name cut to 48 characters,
     project = git root folder name). Thread names, folders and log paths come
     from Codex's own database (`$CODEX_HOME/state_<n>.sqlite`, read-only through
-    Node's built-in `node:sqlite`; else from the logs and `session_index.jsonl`).
+    Node's built-in `node:sqlite`), merged with a scan of the logs and
+    `session_index.jsonl`; Windows verbatim paths (`\\?\C:\...`) are normalized.
     A pane started in a parent folder is narrowed to the project's own folder
     (before worktrees or folders inside it). Sessions from the desktop
     app / IDE, `codex exec`, and sub-agent threads never run in a pane and are skipped.
   - Otherwise: the newest session in the pane's folder (or one inside / above
     it) that is not another pane's and not titled for another window. The panel
     then says other sessions share the folder; `/rename` the session to pin it.
-    Hovering the folder name on the card shows the log file, how it was matched
-    and the pane title Herdr reported.
+    Hovering the folder name on the card (or the "no session" note) shows the log
+    file, how it was matched, the pane title Herdr reported and how many sessions
+    each source found.
   - Folder facts and titles are cached by file size
     (`~/.cache/herdr-context/session-meta.json`), so polling reads only new bytes.
   With the panel itself focused, it describes the tab's last focused terminal.

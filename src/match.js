@@ -35,7 +35,8 @@ import { loadCodexSession } from './codex/load.js';
 
 export const norm = (p) => {
   if (!p || typeof p !== 'string') return null;
-  let s = p.replace(/\\/g, '/');
+  // Windows verbatim paths ("\\?\C:\x", "\\?\UNC\host\x"), as Rust programs print them
+  let s = p.replace(/^[\\/]{2}\?[\\/]UNC[\\/]/i, '//').replace(/^[\\/]{2}\?[\\/]/, '').replace(/\\/g, '/');
   if (s.length > 1) s = s.replace(/\/+$/, '');
   if (/^[a-zA-Z]:(\/|$)/.test(s)) s = s.toLowerCase();
   return s;
@@ -228,6 +229,7 @@ function claudeCandidates(cwd, projectsDir, cache, seen) {
 }
 
 const PANE_SOURCES = new Set(['cli', 'unknown', null]);
+const paneSource = (src) => PANE_SOURCES.has(src == null || src === '' ? null : String(src).replace(/^"|"$/g, '').trim().toLowerCase());
 
 /** Codex's thread list from its state database, or null when it can't be read. */
 export function codexStateThreads(home, env = process.env) {
@@ -272,7 +274,7 @@ export function codexStateThreads(home, env = process.env) {
 function codexDbCandidates(cwd, threads, names) {
   const out = [];
   for (const t of threads) {
-    if (t.sub || !PANE_SOURCES.has(t.source) || !t.file) continue;
+    if (t.sub || !paneSource(t.source) || !t.file) continue;
     const rel = folderRelation(t.cwd, cwd);
     if (!rel) continue;
     let st;
@@ -292,7 +294,7 @@ function codexCandidates(cwd, rollouts, cache, names, seen) {
   for (const r of rollouts) {
     seen.add(r.path);
     const m = codexMeta(r.path, cache);
-    if (m.sub || !PANE_SOURCES.has(m.source)) continue;
+    if (m.sub || !paneSource(m.source)) continue;
     const rel = folderRelation(m.cwd, cwd);
     if (!rel) continue;
     const name = m.id ? names.get(m.id) ?? null : null;
@@ -411,11 +413,23 @@ export function matchPanes(panes, { env = process.env, projectsDir = claudeProje
   let threads; // undefined: not read yet; null: no database
   const items = list.map((p) => {
     if (p.agent === 'claude') return { ...p, cands: claudeCandidates(p.cwd, projectsDir, cache, seen) };
-    names ??= codexThreadNames(home);
-    if (threads === undefined) threads = codexStateThreads(home, env);
-    if (threads) return { ...p, cands: codexDbCandidates(p.cwd, threads, names) };
+    if (threads === undefined) {
+      threads = codexStateThreads(home, env);
+      names = codexThreadNames(home);
+      for (const t of threads ?? []) if (t.id && t.name) names.set(t.id, t.name); // the database knows newer names
+    }
     rollouts ??= listRollouts(path.join(home, 'sessions'), { maxFiles: 400 });
-    return { ...p, cands: codexCandidates(p.cwd, rollouts, cache, names, seen) };
+    // both sources, merged by log file: the database alone has missed sessions
+    // (paths written differently), the log scan alone misses old ones
+    const fromDb = threads ? codexDbCandidates(p.cwd, threads, names) : [];
+    const fromLogs = codexCandidates(p.cwd, rollouts, cache, names, seen);
+    const byFile = new Map();
+    for (const c of [...fromDb, ...fromLogs]) {
+      const k = norm(c.file)?.toLowerCase();
+      if (!byFile.has(k)) byFile.set(k, c);
+    }
+    const diag = `Codex: database ${threads ? `${threads.length} threads, ${fromDb.length} here` : 'not readable'} · logs ${rollouts.length} scanned, ${fromLogs.length} here`;
+    return { ...p, cands: [...byFile.values()], diag };
   });
   const byKind = (k) => assign(items.filter((i) => i.agent === k));
   const pairs = new Map([...byKind('claude'), ...byKind('codex')]);
@@ -423,11 +437,12 @@ export function matchPanes(panes, { env = process.env, projectsDir = claudeProje
 
   return list.map((p) => {
     const hit = pairs.get(p.pane);
-    if (!hit) return { pane: p.pane, agent: p.agent, how: null, others: 0, session: null };
+    const diag = items.find((i) => i.pane === p.pane)?.diag ?? null;
+    if (!hit) return { pane: p.pane, agent: p.agent, how: null, others: 0, session: null, diag, paneTitle: p.title ?? null };
     const { cand, how, others } = hit;
     try {
       const session = cand.agent === 'claude' ? loadClaudeSession(claudeEntry(cand), { env }) : loadCodexSession({ file: cand.file });
-      return { pane: p.pane, agent: p.agent, how, others, paneTitle: p.title ?? null, file: cand.file, session };
+      return { pane: p.pane, agent: p.agent, how, others, paneTitle: p.title ?? null, file: cand.file, diag, session };
     } catch (err) {
       return { pane: p.pane, agent: p.agent, how, others, session: null, error: `${err.name}: ${err.message}` };
     }

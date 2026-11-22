@@ -173,3 +173,34 @@ test("Codex state database: the pane's thread name, else the project's own folde
   assert.deepEqual(codexTitleThread('⠋ a long thread name cut ... | proj'), { name: 'a long thread name cut', prefix: true });
   assert.equal(codexTitleThread('⠋ proj'), null);
 });
+
+test('Codex database with Windows verbatim paths (\\\\?\\C:\\...) still matches; logs fill in what it lacks', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const { norm } = await import('../src/match.js');
+  assert.equal(norm('\\\\?\\C:\\tempDisk\\P'), 'c:/tempdisk/p');
+  assert.equal(norm('\\\\?\\UNC\\host\\share'), '//host/share');
+  const home = tmp();
+  const env = { XDG_CACHE_HOME: tmp() };
+  const d = path.join(home, 'sessions', '2026', '11', '19');
+  fs.mkdirSync(d, { recursive: true });
+  const log = (name, cwd, ts) => {
+    const u = { input_tokens: 1000, cached_input_tokens: 0, output_tokens: 0, total_tokens: 1000 };
+    const f = path.join(d, `rollout-${name}.jsonl`);
+    fs.writeFileSync(f, jl([
+      { timestamp: ts, type: 'session_meta', payload: { id: name, cwd, source: 'cli' } },
+      { timestamp: ts, type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: u, last_token_usage: u, model_context_window: 475000 } } },
+    ]));
+    fs.utimesSync(f, new Date(ts), new Date(ts));
+    return f;
+  };
+  const db = new DatabaseSync(path.join(home, 'state_5.sqlite'));
+  db.exec('CREATE TABLE threads (id TEXT, rollout_path TEXT, cwd TEXT, source TEXT, name TEXT, updated_at INTEGER)');
+  db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?)').run('a', log('a', '/p/proj', '2026-11-19T10:00:00Z'), '\\\\?\\/p/proj', 'cli', 'Named one', 1);
+  db.close();
+  log('b', '/p/proj', '2026-11-19T11:00:00Z'); // only in the logs
+  const run = (title) => matchPanes([{ pane: 'x', agent: 'codex', cwd: '/p', title }], { env, projectsDir: tmp(), home })[0];
+  const r = run('Named one | proj');
+  assert.deepEqual([r.how, r.session.sessionId], ['title', 'a']);
+  assert.match(r.diag, /database 1 threads, 1 here · logs 2 scanned, 2 here/);
+  assert.equal(run('⠋ proj').session.sessionId, 'b', 'newest, found through the logs');
+});

@@ -199,7 +199,7 @@ export default class HerdrContext extends View {
       .child(h_flex().gap(6).items_center()
         .child(div().id("hc-where").text_size(12.5).font_semibold().text_color(t.foreground).truncate()
           // hover: which log, and why this one (for checking a match)
-          .tooltip([session.cwd, match?.file, match ? `${tr("matchedBy")}: ${match.how}${match.paneTitle ? ` · "${match.paneTitle}"` : ""}` : null].filter(Boolean).join("\n"))
+          .tooltip([session.cwd, match?.file, match ? `${tr("matchedBy")}: ${match.how}${match.paneTitle ? ` · "${match.paneTitle}"` : ""}` : null, match?.diag].filter(Boolean).join("\n"))
           .child(baseName(session.cwd ?? cwd) || "—"))
         .child(div().flex_1().text_size(11).text_color(t.dim).truncate().child(where)))
       .child(h_flex().gap(8).items_end()
@@ -301,7 +301,10 @@ export default class HerdrContext extends View {
         : agentKind(pane?.app) ? tr("noSessionLog", { app: pane.app })
         : pane?.app ? tr("otherAgent", { app: pane.app })
         : list.length ? tr("noAgentPick") : tr("noAgent");
-      out.push(v_flex().p(12).rounded(10).border(1).border_color(t.border)
+      // hover: what the search saw (pane title, how many sessions each source found)
+      const diag = match ? [match.paneTitle ? `"${match.paneTitle}"` : null, match.diag].filter(Boolean).join("\n") : "";
+      out.push(v_flex().id("hc-why").p(12).rounded(10).border(1).border_color(t.border)
+        .when(Boolean(diag), (el) => el.tooltip(diag))
         .child(div().text_size(12).text_color(t.muted).child(why)));
     }
     // the space's agents: when this pane has none, or when there are several to compare

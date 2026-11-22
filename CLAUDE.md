@@ -35,7 +35,8 @@ Codex logs (`$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl[.zst]`):
   be narrowed to the project's own folder (not worktrees inside it, e.g. `wt-m4c`).
 - Thread names live in Codex's SQLite DB `$CODEX_HOME/state_<n>.sqlite` (table `threads`:
   id, rollout_path, cwd, source, name, ...), not reliably in `session_index.jsonl`.
-  Read it read-only via `node:sqlite`; fall back to scanning rollouts (incl. `.zst`).
+  Read it read-only via `node:sqlite` and merge with a rollout scan (incl. `.zst`): never
+  rely on the DB alone. Its paths can be Windows verbatim (`\\?\C:\...`): `norm()` strips that.
 
 Matching panes to sessions: several sessions share a folder all the time. Never pick
 "newest in the folder" without title evidence; when guessing, the panel says so.
