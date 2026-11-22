@@ -44,6 +44,19 @@ Codex logs (`$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl[.zst]`):
   Read it read-only via `node:sqlite` and merge with a rollout scan (incl. `.zst`): never
   rely on the DB alone. Its paths can be Windows verbatim (`\\?\C:\...`): `norm()` strips that.
 
+Antigravity CLI `agy` (`~/.gemini/antigravity-cli`; Herdr calls the pane's app "antigravity"):
+- Conversations: `conversation_summaries.db` (workspace_uris = file:/// URIs, parent /
+  nesting_depth for sub-conversations); steps with tokens in
+  `brain/<id>/.system_generated/logs/transcript.jsonl` (`input_tokens` excludes `cache_read_tokens`).
+- agy's own context count/limit is protobuf field 1.9.10 (.1 tokens, .4 limit = 256000 for
+  Gemini 3.8 Flash, not the model's 1M) in `conversations/<id>.db` → `gen_metadata`. No
+  published schema: decoded by field number only.
+- No terminal title. The running agy holds `presence/<id>.lock` open without sharing:
+  Node can only see that with libuv's `UV_FS_O_EXLOCK` (0x10000000, not in fs.constants),
+  Windows only. Lock files stay behind after agy exits.
+- Quota: `agy -p "/usage" --output-format json` answers locally (num_turns 0, zero tokens,
+  no conversation), ~10 s. Don't use Antigravity's internal quota endpoints (account risk).
+
 Matching panes to sessions: several sessions share a folder all the time. Never pick
 "newest in the folder" without title evidence; when guessing, the panel says so.
 

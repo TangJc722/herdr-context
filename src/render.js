@@ -51,13 +51,14 @@ export function renderQuotas({ providers, notes }) {
       L.push(`  ${name}${plan}  ${p.message ?? 'no windows'}`);
       continue;
     }
+    const lw = Math.max(6, ...p.windows.map((w) => String(w.label).length)); // aligned within a provider
     p.windows.forEach((w, i) => {
       const lead = i === 0 ? `  ${name}` : `  ${' '.repeat(width)}`;
       const u = Math.round(w.usedPercent);
       const warn = u >= 90 ? ' ‼' : u >= 70 ? ' !' : '';
       const detail = w.detail ? ` · ${w.detail}` : '';
       const when = w.id === 'bonus' ? resets(w.resetsAt).replace('resets', 'expires') : resets(w.resetsAt);
-      L.push(`${lead}  ${w.label.padEnd(6)} ${bar(w.usedPercent / 100, 12)} ${String(u).padStart(3)}% used${warn}${when}${detail}${i === 0 ? plan : ''}`);
+      L.push(`${lead}  ${String(w.label).padEnd(lw)} ${bar(w.usedPercent / 100, 12)} ${String(u).padStart(3)}% used${warn}${when}${detail}${i === 0 ? plan : ''}`);
     });
     const tail = [p.status === 'stale' ? 'stale' : null, `via ${p.source}`, p.observedAt ? `as of ${p.observedAt.replace('T', ' ').slice(0, 16)}Z` : null, p.message].filter(Boolean);
     L.push(`  ${' '.repeat(width)}  ${tail.join(' · ')}`);

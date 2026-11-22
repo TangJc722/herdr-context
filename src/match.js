@@ -21,6 +21,11 @@
 //   terminal still says so. Such threads are matched by thread name only,
 //   never guessed by folder. Sub-agent threads never run in a pane.
 //
+// - Antigravity (agy) sets no terminal title. A running agy holds its
+//   conversation's presence/<id>.lock open, which pins the pane ("live")
+//   when one held conversation fits; else agy's own last conversation for the
+//   folder, else the newest (both reported as a folder guess).
+//
 // Without a title match: the newest session in the folder that is not already
 // another pane's and does not carry a different title.
 //
@@ -34,6 +39,7 @@ import { claudeProjectsDir } from './claude/discover.js';
 import { loadClaudeSession } from './claude/load.js';
 import { codexHome, listRollouts, readRollout } from './quota/codex.js';
 import { loadCodexSession } from './codex/load.js';
+import { agyDir, listAgyConversations, agyConversationHeld, agyLastConversations, loadAgySession } from './agy/load.js';
 
 export const norm = (p) => {
   if (!p || typeof p !== 'string') return null;
@@ -319,6 +325,40 @@ function codexCandidates(cwd, rollouts, cache, names, seen) {
   return out;
 }
 
+/** agy candidates: top-level conversations in (or around) the pane's folder. */
+function agyCandidates(cwd, convs, last, isHeld) {
+  const out = [];
+  for (const c of convs) {
+    const rel = c.cwds.map((d) => folderRelation(d, cwd)).find(Boolean);
+    if (!rel) continue;
+    const lastHere = Object.entries(last).some(([dir, id]) => id === c.id && folderRelation(dir, cwd));
+    out.push({ agent: 'agy', file: c.transcript, rel, cwd: c.cwd, mtimeMs: c.mtimeMs, id: c.id, title: c.title, titles: [], held: isHeld(c.id), last: lastHere, conv: c });
+  }
+  return out;
+}
+
+/**
+ * Pairs agy panes with conversations. Pure: candidates are given.
+ * "live": the only conversation a running agy holds open there; else "folder".
+ */
+export function assignAgy(items) {
+  const taken = new Set();
+  const result = new Map();
+  const rank = (x) => (x.held === true ? 0 : 2) + (x.last ? 0 : 1);
+  const order = (a, b) => rank(a) - rank(b) || (a.rel === 'same' ? 0 : 1) - (b.rel === 'same' ? 0 : 1) || b.mtimeMs - a.mtimeMs;
+  // panes whose candidates overlap can't be told apart by folder alone
+  const sharing = (it) => items.filter((o) => o.cands.some((c) => it.cands.some((d) => d.file === c.file))).length;
+  for (const it of items) {
+    const free = it.cands.filter((x) => !taken.has(x.file)).sort(order);
+    const c = free[0];
+    if (!c) continue;
+    taken.add(c.file);
+    const live = c.held === true && free.filter((x) => x.held === true).length === 1 && sharing(it) === 1;
+    result.set(it.pane, { cand: c, how: live ? 'live' : 'folder', others: live ? 0 : free.length - 1 });
+  }
+  return result;
+}
+
 // ---------- assignment ----------
 
 /**
@@ -423,18 +463,29 @@ export function assign(items) {
 }
 
 /**
- * @param {{pane:string, agent:'claude'|'codex', cwd:string, title?:string}[]} panes
+ * @param {{pane:string, agent:'claude'|'codex'|'agy', cwd:string, title?:string}[]} panes
  * @returns {{pane:string, agent:string, how:string|null, others:number, session:object|null, error?:string}[]}
  */
-export function matchPanes(panes, { env = process.env, projectsDir = claudeProjectsDir(), home = codexHome(env) } = {}) {
+export function matchPanes(panes, { env = process.env, projectsDir = claudeProjectsDir(), home = codexHome(env), agyHome = agyDir(env), agyHeld } = {}) {
   const cache = loadMetaCache(env);
   const seen = new Set();
-  const list = (panes ?? []).filter((p) => p && p.pane && p.cwd && (p.agent === 'claude' || p.agent === 'codex'));
+  const list = (panes ?? []).filter((p) => p && p.pane && p.cwd && (p.agent === 'claude' || p.agent === 'codex' || p.agent === 'agy'));
   let rollouts = null;
   let names = null;
   let threads; // undefined: not read yet; null: no database
+  let agy = null;
   const items = list.map((p) => {
     if (p.agent === 'claude') return { ...p, cands: claudeCandidates(p.cwd, projectsDir, cache, seen) };
+    if (p.agent === 'agy') {
+      if (!agy) {
+        const held = new Map();
+        const isHeld = agyHeld ?? ((id) => agyConversationHeld(agyHome, id));
+        agy = { convs: listAgyConversations(agyHome), last: agyLastConversations(agyHome), isHeld: (id) => (held.has(id) ? held.get(id) : (held.set(id, isHeld(id)), held.get(id))) };
+      }
+      const cands = agyCandidates(p.cwd, agy.convs, agy.last, agy.isHeld);
+      const diag = `agy: ${agy.convs.length} conversations, ${cands.length} here, ${cands.filter((c) => c.held === true).length} open in a running agy`;
+      return { ...p, cands, diag };
+    }
     if (threads === undefined) {
       threads = codexStateThreads(home, env);
       names = codexThreadNames(home);
@@ -457,7 +508,7 @@ export function matchPanes(panes, { env = process.env, projectsDir = claudeProje
     return { ...p, cands, diag };
   });
   const byKind = (k) => assign(items.filter((i) => i.agent === k));
-  const pairs = new Map([...byKind('claude'), ...byKind('codex')]);
+  const pairs = new Map([...byKind('claude'), ...byKind('codex'), ...assignAgy(items.filter((i) => i.agent === 'agy'))]);
   saveMetaCache(cache, env, seen);
 
   return list.map((p) => {
@@ -466,7 +517,9 @@ export function matchPanes(panes, { env = process.env, projectsDir = claudeProje
     if (!hit) return { pane: p.pane, agent: p.agent, how: null, others: 0, session: null, diag, paneTitle: p.title ?? null };
     const { cand, how, others } = hit;
     try {
-      const session = cand.agent === 'claude' ? loadClaudeSession(claudeEntry(cand), { env }) : loadCodexSession({ file: cand.file });
+      const session = cand.agent === 'claude' ? loadClaudeSession(claudeEntry(cand), { env })
+        : cand.agent === 'agy' ? loadAgySession(cand.conv)
+        : loadCodexSession({ file: cand.file });
       return { pane: p.pane, agent: p.agent, how, others, paneTitle: p.title ?? null, file: cand.file, diag, session };
     } catch (err) {
       return { pane: p.pane, agent: p.agent, how, others, session: null, error: `${err.name}: ${err.message}` };

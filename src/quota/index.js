@@ -6,6 +6,7 @@
 //   Codex:  session logs (if < 5 min old) → `codex app-server` (cached 3 min)
 //           → session logs (older)
 //   Kiro:   `kiro-cli /usage` (cached 10 min)
+//   agy:    `agy -p /usage --output-format json` (cached 10 min; passive: cache only)
 //   others: quota-axi, which also stands in when a source above has nothing.
 // `active: false` (CLI --passive) never starts claude/codex processes.
 // `refresh: true` skips freshness checks and caches.
@@ -15,6 +16,7 @@ import { claudeCliQuota } from './claude-cli.js';
 import { codexQuota } from './codex.js';
 import { codexRpcQuota } from './codex-rpc.js';
 import { kiroQuota } from './kiro.js';
+import { agyQuota } from './agy.js';
 import { quotaAxi } from './quota-axi.js';
 import { readCache, writeCache, isFresh } from './common.js';
 
@@ -72,13 +74,21 @@ export async function codexBest(o = {}) {
     : rpc;
 }
 
+/** agy's quota; passive runs never start agy and show only an earlier reading. */
+export function agyBest({ refresh = false, active = true, now = Date.now(), env = process.env, agy = {} } = {}) {
+  if (active) return agyQuota({ refresh, now, env, ...agy });
+  const c = readCache('agy', Infinity, { env, now });
+  return c ? { ...c, source: 'agy /usage (cached)' } : null;
+}
+
 export async function collectQuotas(opts = {}) {
   const common = { refresh: opts.refresh, active: opts.active, now: opts.now, env: opts.env };
   const own = [
     await claudeBest({ ...common, direct: !!opts.direct, directOpts: opts.claudeDirect, statusline: opts.claude, cli: opts.claudeCli, account: opts.claudeAccount }),
     await codexBest({ ...common, logs: opts.codex, rpc: opts.codexRpc }),
     kiroQuota({ refresh: opts.refresh, ...opts.kiro }),
-  ];
+    agyBest({ ...common, agy: opts.agy }),
+  ].filter(Boolean);
   const notes = [];
   let axi = { available: false, providers: [] };
   if (opts.axi !== false) {

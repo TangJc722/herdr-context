@@ -5,8 +5,8 @@
 看清编程 agent 的上下文窗口里装了什么、这些内容从哪来，以及每个订阅还剩多少额度。
 目前先做数据层和命令行工具，接下来在此基础上做 [Herdr](https://herdr.dev) mod。
 
-上下文分析支持 **Claude Code** 和 **Codex**。
-订阅用量支持 Claude、Codex、Kiro，并可通过 quota-axi 覆盖 Cursor、Copilot 等。
+上下文分析支持 **Claude Code**、**Codex** 和 **Antigravity**（`agy`）。
+订阅用量支持 Claude、Codex、Antigravity、Kiro，并可通过 quota-axi 覆盖 Cursor、Copilot 等。
 
 ```
 claude · 1dea6540 · ~/work/api (main) · claude-opus-5-5 · v2.1.330
@@ -65,6 +65,9 @@ Herdr 自带的布局是只读的，所以安装脚本会另外生成一个布�
     桌面应用 / IDE 或 `codex exec` 创建的会话可能后来在终端里被恢复，所以会按会话名匹配，
     但不会只凭文件夹被选中；子 agent 线程会被跳过。
     Codex 压缩过的旧日志（`.jsonl.zst`）也能找到，即使数据库里记录的还是 `.jsonl`。
+  - Antigravity（`agy`）不设置终端标题。正在运行的 agy 会一直打开当前会话的 `presence/<id>.lock`
+    （在 Windows 上检测），据此把窗格对应到这个会话（"live"）；否则取 agy 在这个文件夹里最近打开的会话
+    （`cache/last_conversations.json`），并标明是推测。
   - 都对不上时：取窗格所在文件夹（或它的上下级文件夹）里最新的、没被别的窗格占用、标题也不属于别的窗口的会话。
     这时面板会提示这个文件夹还有其他会话；用 `/rename` 给会话命名就能精确对应。
     鼠标悬停在卡片上的文件夹名（或"没有会话"的提示）上，可以看到对应的日志文件、匹配方式、
@@ -126,7 +129,7 @@ Claude Code 会把准确的窗口大小、它自己算的百分比以及 5 小�
 ```sh
 node bin/herdr-context.js quota            # 默认：先用本地数据，再调用 agent 自己的命令
 node bin/herdr-context.js quota --refresh  # 忽略缓存，立刻向所有数据源查询
-node bin/herdr-context.js quota --passive  # 不启动 claude / codex，只用本地数据
+node bin/herdr-context.js quota --passive  # 不启动 claude / codex / agy，只用本地数据
 node bin/herdr-context.js quota --direct   # Claude：直接使用本地登录凭证（需手动开启，见下文）
 node bin/herdr-context.js quota --json     # 给 Herdr mod 用；--no-axi 不调用 quota-axi
 ```
@@ -142,6 +145,9 @@ Subscription usage
   kiro    month  █████░░░░░░░  41% used (resets in 9d 9h) · 820.5 of 2000 credits [KIRO PRO]
           bonus  █░░░░░░░░░░░  12% used (expires in 19d 23h) · 12 of 100 bonus credits
           via kiro-cli · as of 2026-11-21 14:35Z
+  agy     Gemini week     ░░░░░░░░░░░░   3% used (resets in 6d 20h)
+          Claude/GPT week ░░░░░░░░░░░░   0% used (resets in 6d 23h)
+          via agy /usage · as of 2026-11-21 14:35Z
   cursor  month  █████░░░░░░░  45% used (resets in 8d 23h) [pro]
           via quota-axi · as of 2026-11-21 14:35Z
 ```
@@ -154,6 +160,7 @@ Subscription usage
 | Claude | 采集器保存的 statusLine 数据（取所有会话中当前窗口的最高读数） | `claude -p "/usage"`，缓存 5 分钟 | Claude Code 使用自己的登录 |
 | Codex | `$CODEX_HOME/sessions/**/rollout-*.jsonl[.zst]` 中最后一个带 `rate_limits` 的 `token_count` 事件 | `codex -s read-only -a never app-server` → JSON-RPC `account/rateLimits/read`，缓存 3 分钟 | Codex 使用（并自行续期）自己的登录 |
 | Kiro | — | `kiro-cli chat --no-interactive "/usage" --v2`，解析文本输出，缓存 10 分钟 | 使用 kiro-cli 自己的登录 |
+| Antigravity | — | 在一个空目录里运行 `agy -p "/usage" --output-format json`，缓存 10 分钟 | 使用 agy 自己的 Google 登录 |
 | Cursor、Copilot、Grok 等 | — | 已安装 [`quota-axi`](https://github.com/kunchenguid/quota-axi) 时调用 `quota-axi --json` | 由 quota-axi 读取各 CLI 的登录 |
 
 某个数据源失败时，会继续尝试下一个，并显示失败原因；上面的数据源都没有数据时，quota-axi 也会补上。
@@ -186,6 +193,11 @@ Codex 不需要直连模式：它的 app-server 本来就是用 Codex 自己的�
 Kiro 的注意事项：它没有公开的 API，输出格式一旦变化，解析就会失效；每次查询都会启动一次非交互式对话，kiro-cli 会为此留下一个空会话记录。
 解析器是按照 CodexBar 文档里的输出格式编写的，**还没有在真实的 kiro-cli 上验证过**。
 
+Antigravity：`/usage` 是 agy 自己的命令。在打印模式下它直接在本地返回结果
+（不调用模型、不消耗 token、不保存会话），每个模型组（Gemini；Claude 和 GPT）各一个每周额度，以剩余比例表示。
+每次大约 10 秒，所以结果会缓存；`--passive` 只显示之前的结果。已在 2026 年 11 月的 agy CLI 上验证。
+不使用 Antigravity 的内部额度接口。
+
 ## 每个数字从哪里来
 
 | 数据 | 来源 | 可信度 |
@@ -216,6 +228,15 @@ Codex（`$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl[.zst]`），依据 code
 子 agent 线程（`session_meta` 里有 `parent_thread_id`）不会出现在列表里。
 还没有用真实的 Codex 日志验证过：如果数字看起来不对，请发一份 `--json` 输出给我们。
 
+Antigravity（`~/.gemini/antigravity-cli`，或 `AGY_DATA_DIR`），已在 2026 年 11 月的 agy CLI 上验证：
+
+| 数据 | 来源 | 可信度 |
+|---|---|---|
+| 会话列表、文件夹 | `conversation_summaries.db`（SQLite，只读）；子会话不计入 | 实测 |
+| token 总量、趋势（备用） | `brain/<id>/.system_generated/logs/transcript.jsonl`：每个模型步骤的 `input_tokens` + `cache_read_tokens` | 实测 |
+| 上下文 token 数、窗口大小 | agy 自己的统计，在 `conversations/<id>.db` 的 `gen_metadata` 里（protobuf 字段 1.9.10：token 数和上限，比如 Gemini 3.8 Flash 是 256k）；没有时用最后一次请求的大小，不显示百分比 | 按字段解码，没有公开的结构定义 |
+| 组成拆分、文件、工具 | 暂未读取 | — |
+
 ## 目录结构
 
 ```
@@ -226,16 +247,17 @@ src/claude/statusline.js   statusLine 数据的保存、读取和规范化
 src/claude/discover.js     查找会话日志
 src/claude/models.js       每个 Claude 模型的上下文窗口大小（来自 Claude Code 的模型表）
 src/codex/                 Codex rollout 日志 → 相同结构的快照
-src/match.js               把每个 Herdr 窗格对应到它自己的会话（终端标题、文件夹）
+src/agy/                   Antigravity CLI 会话 → 相同结构的快照
+src/match.js               把每个 Herdr 窗格对应到它自己的会话（终端标题、正在打开的会话、文件夹）
 src/quota/                 订阅用量：claude（statusLine）、claude-cli（/usage）、claude-direct、
-                           codex（日志）、codex-rpc（app-server）、kiro、quota-axi、index（数据源顺序）
+                           codex（日志）、codex-rpc（app-server）、kiro、agy（/usage）、quota-axi、index（数据源顺序）
 src/herdr-layout.js        根据 Herdr 的 main 布局生成 main-context 布局
 src/render.js              文本输出
 bin/                       命令行工具、statusLine 采集器、install-mod.js（Herdr mod 安装脚本）
 mod/herdr-context/         Herdr mod：main.js（界面）、logic.js（纯逻辑，有测试）、sample.js（检查用的示例数据）
 test/                      node --test 测试，使用合成的样本数据和一个模拟的 codex app-server 脚本；
                            main.js 在模拟的 Herdr 模块上实际运行。
-                           测试绝不会启动真实的 claude 或 codex。
+                           测试绝不会启动真实的 claude、codex 或 agy。
 ```
 
 运行 `npm test` 执行全部测试。
@@ -245,6 +267,7 @@ test/                      node --test 测试，使用合成的样本数据和�
 1. **Codex 上下文分析**：已完成。下一步：用真实的 rollout 日志确认。
 2. **Herdr mod**：状态栏小标签 + 右侧边栏的 Context 面板（main-context 布局）。
    下一步：增量读取日志，避免每次轮询都重新解析整个日志。
-3. **订阅用量**：已完成（Claude 的 statusLine / `/usage` / 直连模式，Codex 的日志 / app-server，Kiro，quota-axi）。
+3. **订阅用量**：已完成（Claude 的 statusLine / `/usage` / 直连模式，Codex 的日志 / app-server，Antigravity 的 `/usage`，Kiro，quota-axi）。
    下一步：用真实输出验证 Claude `/usage` 文本和 Kiro；不依赖 quota-axi 支持 Cursor。
 4. Cursor 上下文分析：调研它的 CLI 在本地留下了哪些数据。
+5. **Antigravity 上下文分析**：token 数、窗口大小和窗格匹配已完成。下一步：从 transcript 里读出组成拆分、文件和工具。

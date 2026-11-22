@@ -103,6 +103,8 @@ test('redesign helpers: trend bars, paths, agents, providers, reset times', () =
   assert.deepEqual(list.map((a) => [a.title, a.kind, a.session?.sessionId ?? null]), [['api', 'claude', 'a'], ['fix login', 'claude', null], ['x', 'codex', 'cx']]);
   assert.equal(logic.agentKind('Codex'), 'codex');
   assert.equal(logic.agentKind('pwsh'), null);
+  assert.equal(logic.agentKind('antigravity'), 'agy');
+  assert.equal(logic.providerName('agy'), 'Antigravity');
   assert.equal(logic.pickSession(sessions, '/w/api', 'codex').sessionId, 'cx');
   assert.equal(logic.pickSession(sessions, '/w/api').sessionId, 'a', 'no agent given: newest of any');
 
@@ -263,7 +265,7 @@ test('mod main.js: fetches through the bundled CLI and draws panel and chip', as
     shared: {},
     layout: { id: 'root', type: 'row', children: [] }, // Herdr's main: no Context panel
     // keep the CLI away from the real machine: no real claude/codex/kiro, temp caches
-    env: { CLAUDE_CONFIG_DIR: path.dirname(projects), XDG_CACHE_HOME: cache, CODEX_HOME: tmp(), PATH: path.dirname(process.execPath) },
+    env: { CLAUDE_CONFIG_DIR: path.dirname(projects), XDG_CACHE_HOME: cache, CODEX_HOME: tmp(), AGY_DATA_DIR: tmp(), PATH: path.dirname(process.execPath) },
   };
   // CLAUDE_CONFIG_DIR/projects must be the fixture dir
   fs.renameSync(projects, path.join(path.dirname(projects), 'projects-' + path.basename(projects)));

@@ -104,8 +104,9 @@ export default class HerdrContext extends View {
     });
   }
 
-  /** Every pane running Claude Code or Codex, for `herdr-context match`: the CLI
-   *  pairs each with its own session (by terminal title, else folder). */
+  /** Every pane running Claude Code, Codex or Antigravity, for `herdr-context match`:
+   *  the CLI pairs each with its own session (by terminal title, agy's open
+   *  conversation, else folder). */
   agentPanes() {
     const byPane = new Map(panes().map((p) => [p.pane, p]));
     const out = [];
@@ -218,7 +219,7 @@ export default class HerdrContext extends View {
     }
     // matched by folder while other sessions share it: say it is the newest, not a certainty
     if (match?.how === "folder" && match.others > 0) {
-      card.child(div().text_size(11).text_color(t.dim).child(tr("guessed", { n: match.others })));
+      card.child(div().text_size(11).text_color(t.dim).child(tr(session.agent === "agy" ? "guessedAgy" : "guessed", { n: match.others })));
     }
     const k = session.compactions ?? [];
     const facts = [
@@ -325,10 +326,13 @@ export default class HerdrContext extends View {
       .when(Boolean(p.plan), (el) => el.child(div().px(5).py(1).rounded(4).bg(t.raised).text_size(10).text_color(t.muted).child(String(p.plan))))
       .child(div().flex_1())
       .when(p.status === "stale", (el) => el.child(div().text_size(10.5).text_color(t.dim).child(tr("stale"))));
+    // labels like "Claude/GPT week" need a wider column than "5h" / "week"
+    const long = p.windows.some((w) => windowLabel(w.label, lang).length > 8);
+    const labelW = long ? 104 : lang === "zh" ? 64 : 44;
     const rows = p.windows.map((w) => {
       const when = w.resetsAt ? resetsText(w.resetsAt, lang) : (w.detail ?? "").replace(/^resets /, "");
       return h_flex().gap(8).items_center()
-        .child(div().w(lang === "zh" ? 64 : 44).text_size(11.5).text_color(t.muted).truncate().child(windowLabel(w.label, lang)))
+        .child(div().w(labelW).text_size(11.5).text_color(t.muted).truncate().child(windowLabel(w.label, lang)))
         .child(div().flex_1().child(this.bar(t, w.usedPercent / 100, this.color(t, w.usedPercent), 5)))
         .child(div().w(36).text_size(12).font_semibold().text_color(this.valueColor(t, w.usedPercent)).child(`${Math.round(w.usedPercent)}%`))
         .child(div().w(lang === "zh" ? 80 : 64).text_size(10.5).text_color(t.dim).truncate().child(when));

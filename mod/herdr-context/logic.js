@@ -50,11 +50,12 @@ export function choosePane(focus, paneList, lastPane) {
 
 const newest = (list) => list.slice().sort((a, b) => String(b.lastTs ?? "").localeCompare(String(a.lastTs ?? "")))[0] ?? null;
 
-/** Which agent a pane runs, as far as the context view goes: "claude" | "codex" | null. */
+/** Which agent a pane runs, as far as the context view goes: "claude" | "codex" | "agy" | null. */
 export function agentKind(app) {
   const a = String(app ?? "").toLowerCase();
   if (a.includes("claude")) return "claude";
   if (a.includes("codex")) return "codex";
+  if (a.includes("antigravity") || /^agy\b/.test(a)) return "agy";
   return null;
 }
 
@@ -252,7 +253,7 @@ export function spaceAgents(agentList, paneList, sessions, spaceId) {
       // An unnamed tab is called by its number ("1") or by its program ("Claude Code"):
       // use the folder then, as the sidebar does.
       const tn = String(a.tab_name ?? "").trim();
-      const generic = !tn || /^\d+$/.test(tn) || /^(claude( code)?|codex|bash|zsh|fish|sh|pwsh|powershell|cmd)$/i.test(tn);
+      const generic = !tn || /^\d+$/.test(tn) || /^(claude( code)?|codex|antigravity|agy|bash|zsh|fish|sh|pwsh|powershell|cmd)$/i.test(tn);
       const named = generic ? null : tn;
       const title = a.pane_name || named || baseName(cwd) || a.title || a.app;
       const kind = agentKind(a.app);
@@ -261,7 +262,7 @@ export function spaceAgents(agentList, paneList, sessions, spaceId) {
     });
 }
 
-const PROVIDER_NAMES = { claude: "Claude", codex: "Codex", kiro: "Kiro", cursor: "Cursor", copilot: "Copilot", grok: "Grok" };
+const PROVIDER_NAMES = { claude: "Claude", codex: "Codex", agy: "Antigravity", kiro: "Kiro", cursor: "Cursor", copilot: "Copilot", grok: "Grok" };
 export const providerName = (id) => PROVIDER_NAMES[id] ?? (id ? id.charAt(0).toUpperCase() + id.slice(1) : "?");
 
 /** Providers with numbers, and the rest folded into one "not set up" line. */

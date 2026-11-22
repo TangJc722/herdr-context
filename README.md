@@ -6,8 +6,8 @@ What is in your coding agent's context window, where it came from, and how much
 of each subscription you have left.
 A data layer and CLI first; a [Herdr](https://herdr.dev) mod on top next.
 
-Context analysis supports **Claude Code** and **Codex**.
-Subscription usage covers Claude, Codex and Kiro, plus Cursor, Copilot and others through quota-axi.
+Context analysis supports **Claude Code**, **Codex** and **Antigravity** (`agy`).
+Subscription usage covers Claude, Codex, Antigravity and Kiro, plus Cursor, Copilot and others through quota-axi.
 
 ```
 claude · 1dea6540 · ~/work/api (main) · claude-opus-5-5 · v2.1.330
@@ -76,6 +76,10 @@ How it works:
     their thread name, but never picked by folder alone; sub-agent threads are
     skipped. Logs Codex has compressed (`.jsonl.zst`) are found even though the
     database still lists them as `.jsonl`.
+  - Antigravity (`agy`) sets no terminal title. A running agy keeps its
+    conversation's `presence/<id>.lock` open (checked on Windows), which ties the
+    pane to that conversation ("live"); otherwise the conversation agy last
+    opened in that folder (`cache/last_conversations.json`), shown as a guess.
   - Otherwise: the newest session in the pane's folder (or one inside / above
     it) that is not another pane's and not titled for another window. The panel
     then says other sessions share the folder; `/rename` the session to pin it.
@@ -152,7 +156,7 @@ Every subscription on this machine in one list.
 ```sh
 node bin/herdr-context.js quota            # default: local data, then the agents' own commands
 node bin/herdr-context.js quota --refresh  # ignore caches, ask every source now
-node bin/herdr-context.js quota --passive  # never start claude / codex; local data only
+node bin/herdr-context.js quota --passive  # never start claude / codex / agy; local data only
 node bin/herdr-context.js quota --direct   # Claude: use the local login directly (opt-in, see below)
 node bin/herdr-context.js quota --json     # for the Herdr mod; --no-axi skips quota-axi
 ```
@@ -168,6 +172,9 @@ Subscription usage
   kiro    month  █████░░░░░░░  41% used (resets in 9d 9h) · 820.5 of 2000 credits [KIRO PRO]
           bonus  █░░░░░░░░░░░  12% used (expires in 19d 23h) · 12 of 100 bonus credits
           via kiro-cli · as of 2026-11-21 14:35Z
+  agy     Gemini week     ░░░░░░░░░░░░   3% used (resets in 6d 20h)
+          Claude/GPT week ░░░░░░░░░░░░   0% used (resets in 6d 23h)
+          via agy /usage · as of 2026-11-21 14:35Z
   cursor  month  █████░░░░░░░  45% used (resets in 8d 23h) [pro]
           via quota-axi · as of 2026-11-21 14:35Z
 ```
@@ -180,6 +187,7 @@ otherwise the agent's own command is asked (results cached):
 | Claude | statusLine readings from the collector (highest reading of the current window across sessions) | `claude -p "/usage"`, cached 5 min | Claude Code uses its own login |
 | Codex | last `token_count` event with `rate_limits` in `$CODEX_HOME/sessions/**/rollout-*.jsonl[.zst]` | `codex -s read-only -a never app-server` → JSON-RPC `account/rateLimits/read`, cached 3 min | Codex uses (and renews) its own login |
 | Kiro | — | `kiro-cli chat --no-interactive "/usage" --v2`, text parsed, cached 10 min | kiro-cli's own login |
+| Antigravity | — | `agy -p "/usage" --output-format json` in an empty folder, cached 10 min | agy's own Google login |
 | Cursor, Copilot, Grok, … | — | [`quota-axi --json`](https://github.com/kunchenguid/quota-axi) when installed | quota-axi reads each CLI's login |
 
 If a source fails, the next one is tried and the reason is shown; quota-axi also
@@ -218,6 +226,12 @@ run starts a non-interactive chat and the CLI saves an empty session for it.
 The parser is built from CodexBar's documented format and **has not yet been
 checked against a live kiro-cli**.
 
+Antigravity: `/usage` is agy's own command. In print mode it answers locally
+(no model call, no tokens, no conversation saved) with one weekly bucket per
+model group (Gemini; Claude and GPT), as remaining fractions. It takes about
+10 s, hence the cache; `--passive` shows only an earlier reading. Checked against
+the agy CLI of 2026-11. Antigravity's internal quota endpoints are not used.
+
 ## Where each number comes from
 
 | Figure | Source | Confidence |
@@ -250,6 +264,15 @@ rollout and protocol types:
 Sub-agent threads (`parent_thread_id` in `session_meta`) are left out of the list.
 Not yet checked against a real Codex log: send one `--json` output if numbers look off.
 
+Antigravity (`~/.gemini/antigravity-cli`, or `AGY_DATA_DIR`), checked against the agy CLI of 2026-11:
+
+| Figure | Source | Confidence |
+|---|---|---|
+| Conversations, folder | `conversation_summaries.db` (SQLite, read-only); sub-conversations left out | measured |
+| Token totals, trend fallback | `brain/<id>/.system_generated/logs/transcript.jsonl`: `input_tokens` + `cache_read_tokens` per model step | measured |
+| Context tokens, window | agy's own accounting in `conversations/<id>.db` → `gen_metadata` (protobuf field 1.9.10: tokens, limit, e.g. 256k for Gemini 3.8 Flash); without it, the last prompt and no % | decoded without a published schema |
+| Makeup, files, tools | not read yet | — |
+
 ## Layout
 
 ```
@@ -260,16 +283,17 @@ src/claude/statusline.js   statusLine payload save / read / normalize
 src/claude/discover.js     finds session logs
 src/claude/models.js       context window per Claude model (Claude Code's table)
 src/codex/                 Codex rollout logs → the same snapshot shape
-src/match.js               pairs each Herdr pane with its own session (terminal title, folder)
+src/agy/                   Antigravity CLI conversations → the same snapshot shape
+src/match.js               pairs each Herdr pane with its own session (terminal title, open conversation, folder)
 src/quota/                 subscription usage: claude (statusLine), claude-cli (/usage), claude-direct,
-                           codex (logs), codex-rpc (app-server), kiro, quota-axi, index (source order)
+                           codex (logs), codex-rpc (app-server), kiro, agy (/usage), quota-axi, index (source order)
 src/herdr-layout.js        builds the main-context layout from Herdr's main
 src/render.js              text output
 bin/                       CLI, statusLine collector, install-mod.js (Herdr mod installer)
 mod/herdr-context/         the Herdr mod: main.js (drawing), logic.js (pure, tested), sample.js (check data)
 test/                      node --test, synthetic fixtures; a fake codex app-server script;
                            main.js run against stand-ins for Herdr's modules.
-                           Tests never start the real claude or codex.
+                           Tests never start the real claude, codex or agy.
 ```
 
 `npm test` runs the suite.
@@ -279,6 +303,7 @@ test/                      node --test, synthetic fixtures; a fake codex app-ser
 1. **Codex context**: done. Next: confirm against a real rollout log.
 2. **Herdr mod**: status-bar chip + Context panel in the right sidebar (main-context layout).
    Next: an incremental reader so polling never re-parses whole logs.
-3. **Quota**: done (Claude statusLine / `/usage` / direct, Codex logs / app-server, Kiro, quota-axi).
+3. **Quota**: done (Claude statusLine / `/usage` / direct, Codex logs / app-server, Antigravity `/usage`, Kiro, quota-axi).
    Next: verify Claude `/usage` text and Kiro against live reports; Cursor without quota-axi.
 4. Cursor context: research what its CLI leaves on disk.
+5. **Antigravity context**: tokens, window and matching done. Next: makeup, files and tools from the transcript.

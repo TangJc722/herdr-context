@@ -1,7 +1,7 @@
 // Shared shape for subscription usage, whatever the provider.
 //
 // ProviderQuota = {
-//   provider: 'claude' | 'codex' | 'kiro' | <quota-axi provider id>,
+//   provider: 'claude' | 'codex' | 'kiro' | 'agy' | <quota-axi provider id>,
 //   source:   where the numbers came from (shown to the user),
 //   status:   'ok' | 'stale' | 'not_found' | 'error',
 //   plan:     string | null,
