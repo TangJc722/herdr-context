@@ -28,8 +28,14 @@ Codex logs (`$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl[.zst]`):
 - Context = `token_count.info.last_token_usage.total_tokens`; window = `model_context_window`;
   % = (tokens − 12000) / (window − 12000), Codex's own formula.
 - token_count repeats without new usage: skip repeats. Old files are zstd (`.zst`).
-- Sessions from the desktop app / IDE (`source: vscode`), `exec`, `mcp`, sub-agents
-  (`source: {subagent}` / `parent_thread_id`) never run in a pane.
+- `source` is where a thread was *created* and never changes: a thread made in the desktop
+  app (`source: vscode`, `originator: Codex Desktop`) and later `codex resume`d in a terminal
+  still says `vscode`, in the DB and the rollout's `session_meta`; nothing in the log marks
+  the terminal resume (a lone `thread_settings_applied` record at most). So `vscode` / `exec`
+  / `mcp` threads stay candidates but match by thread name only, never by folder guess.
+  Sub-agents (`source: {subagent}` / `parent_thread_id` / `agent_role`) never run in a pane.
+- Codex compresses old rollouts to `.jsonl.zst`, but the DB's `rollout_path` keeps the
+  `.jsonl` name: try `<path>.zst` when the file is gone.
 - Terminal title: "<spinner> <thread name> | <project>": thread name cut to 48 chars with
   "...", project = git root folder name (24 chars). A pane started in a parent folder must
   be narrowed to the project's own folder (not worktrees inside it, e.g. `wt-m4c`).

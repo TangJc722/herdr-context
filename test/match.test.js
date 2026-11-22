@@ -78,7 +78,7 @@ test('a titled pane does not take a session titled for another window', () => {
   assert.deepEqual([g.get('p').cand.file, g.get('p').how, g.get('p').others], ['a', 'folder', 1]);
 });
 
-test('Codex panes: thread name, then newest terminal session; app, exec and sub-agent threads never', () => {
+test('Codex panes: thread name, then newest terminal session; app and exec threads never by folder, sub-agents never', () => {
   const home = tmp();
   const env = { XDG_CACHE_HOME: tmp() };
   rollout(home, 'cli-old', { id: 'cli-old', source: 'cli' }, 100000, '2026-11-19T09:00:00Z');
@@ -203,4 +203,59 @@ test('Codex database with Windows verbatim paths (\\\\?\\C:\\...) still matches;
   assert.deepEqual([r.how, r.session.sessionId], ['title', 'a']);
   assert.match(r.diag, /database 1 threads, 1 here · logs 2 scanned, 2 here/);
   assert.equal(run('⠋ proj').session.sessionId, 'b', 'newest, found through the logs');
+});
+
+test('Codex thread started in the desktop app and resumed in a terminal: matched by its name, never by folder', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const zlib = await import('node:zlib');
+  const home = tmp();
+  const env = { XDG_CACHE_HOME: tmp() };
+  const u = (n) => ({ input_tokens: n, cached_input_tokens: 0, output_tokens: 0, total_tokens: n });
+  const log = (day, name, meta, tokens, ts, { zst = false } = {}) => {
+    const d = path.join(home, 'sessions', '2026', '11', day);
+    fs.mkdirSync(d, { recursive: true });
+    const f = path.join(d, `rollout-${name}.jsonl`);
+    const text = jl([
+      { timestamp: ts, type: 'session_meta', payload: { id: name, cwd: '/x', ...meta } },
+      { timestamp: ts, type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: u(tokens), last_token_usage: u(tokens), model_context_window: 475000 } } },
+    ]);
+    const out = zst ? f + '.zst' : f;
+    fs.writeFileSync(out, zst ? zlib.zstdCompressSync(Buffer.from(text)) : text);
+    fs.utimesSync(out, new Date(ts), new Date(ts));
+    return f; // the database keeps the .jsonl name even after compression
+  };
+  const P = 'C:\\P\\myProjects';
+  const W = `${P}\\dsh-agent-workbench`;
+  const V = '\\\\?\\'; // Windows verbatim prefix, as Codex writes paths
+  const db = new DatabaseSync(path.join(home, 'state_5.sqlite'));
+  db.exec('CREATE TABLE threads (id TEXT, rollout_path TEXT, cwd TEXT, source TEXT, name TEXT, agent_role TEXT, archived INTEGER, updated_at INTEGER)');
+  const add = db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, 0, ?)');
+  // created in the desktop app (its origin stays "vscode"), later resumed in the pane
+  add.run('app', log('19', 'app', { cwd: W, source: 'vscode', originator: 'Codex Desktop' }, 384608, '2026-11-19T17:04:00Z'), V + W, 'vscode', 'DSH插件优化-Fable设计方案', null, 3);
+  // same name, another project, newer
+  add.run('app-elsewhere', log('20', 'app-elsewhere', { cwd: `${P}\\other`, source: 'vscode' }, 1000, '2026-11-20T10:00:00Z'), `${P}\\other`, 'vscode', 'DSH插件优化-Fable设计方案', null, 4);
+  // a terminal session in a worktree of the project, newer than the app thread
+  add.run('worktree', log('21', 'worktree', { cwd: `${W}\\wt-m4c`, source: 'cli' }, 325804, '2026-11-21T09:00:00Z'), `${V}${W}\\wt-m4c`, 'cli', null, null, 5);
+  // an exec run with a short name, in the project's own folder
+  add.run('exec', log('21', 'exec', { cwd: W, source: 'exec' }, 5000, '2026-11-21T10:00:00Z'), W, 'exec', 'deck', null, 6);
+  const hasZstd = typeof zlib.zstdCompressSync === 'function';
+  if (hasZstd) add.run('old-cli', log('01', 'old-cli', { cwd: `${W}\\wt-old`, source: 'cli' }, 2000, '2026-11-01T09:00:00Z', { zst: true }), `${W}\\wt-old`, 'cli', 'Old work', null, 1);
+  db.close();
+  const run = (title) => matchPanes([{ pane: 'x', agent: 'codex', cwd: P, title }], { env, projectsDir: tmp(), home })[0];
+
+  const r = run('DSH插件优化-Fable设计方案 | dsh-agent-workbench');
+  assert.deepEqual([r.how, r.session.sessionId], ['title', 'app']);
+  assert.equal(Math.round(r.session.context.percent * 100), 80, '(384608 − 12k) / (475k − 12k)');
+  assert.match(r.diag, /from the app\/exec \(name match only\)/);
+  // no name in the title: a guess among terminal sessions only, flagged
+  const g = run('⠋ Something new | dsh-agent-workbench');
+  assert.deepEqual([g.how, g.session.sessionId], ['folder', 'worktree']);
+  // a custom title layout containing an app/exec thread's name is not enough
+  assert.notEqual(run('deck').session?.sessionId, 'exec');
+  if (hasZstd) {
+    // the database still says .jsonl; the log is now .jsonl.zst
+    const o = run('Old work | dsh-agent-workbench');
+    assert.deepEqual([o.how, o.session.sessionId], ['title', 'old-cli']);
+    assert.ok(o.file.endsWith('.jsonl.zst'));
+  }
 });

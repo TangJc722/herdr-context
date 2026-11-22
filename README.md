@@ -71,8 +71,11 @@ How it works:
     Node's built-in `node:sqlite`), merged with a scan of the logs and
     `session_index.jsonl`; Windows verbatim paths (`\\?\C:\...`) are normalized.
     A pane started in a parent folder is narrowed to the project's own folder
-    (before worktrees or folders inside it). Sessions from the desktop
-    app / IDE, `codex exec`, and sub-agent threads never run in a pane and are skipped.
+    (before worktrees or folders inside it). Threads created in the desktop app /
+    IDE or by `codex exec` can be resumed in a terminal, so they are matched by
+    their thread name, but never picked by folder alone; sub-agent threads are
+    skipped. Logs Codex has compressed (`.jsonl.zst`) are found even though the
+    database still lists them as `.jsonl`.
   - Otherwise: the newest session in the pane's folder (or one inside / above
     it) that is not another pane's and not titled for another window. The panel
     then says other sessions share the folder; `/rename` the session to pin it.

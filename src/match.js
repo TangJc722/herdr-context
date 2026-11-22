@@ -11,13 +11,15 @@
 //   The title is prefixed with a status glyph ("✳", "◐", "◑", ">", "*").
 // - Codex puts the thread name (from /rename, kept in
 //   $CODEX_HOME/session_index.jsonl) in the terminal title, when there is one.
-//   Sessions started outside a terminal (desktop app / IDE, `codex exec`,
-//   internal and sub-agent threads) never run in a pane and are left out.
 //   Newer Codex keeps every thread (folder, name, log path, origin) in a SQLite
 //   database, $CODEX_HOME/state_<n>.sqlite (table "threads"); it is read
-//   read-only with Node's built-in node:sqlite when available, else the
-//   rollout logs' first lines are scanned. The title's thread part is the
+//   read-only with Node's built-in node:sqlite when available, and merged with
+//   a scan of the rollout logs' first lines. The title's thread part is the
 //   thread name cut to 48 characters with "...".
+//   A thread keeps the origin it was created with: one started in the desktop
+//   app / IDE (source "vscode") or by `codex exec` and later resumed in a
+//   terminal still says so. Such threads are matched by thread name only,
+//   never guessed by folder. Sub-agent threads never run in a pane.
 //
 // Without a title match: the newest session in the folder that is not already
 // another pane's and does not carry a different title.
@@ -228,8 +230,20 @@ function claudeCandidates(cwd, projectsDir, cache, seen) {
   return out;
 }
 
+// Threads started in a terminal. Others (desktop app / IDE, exec, mcp) can be
+// resumed in one, so they stay candidates, but only for a thread-name match.
 const PANE_SOURCES = new Set(['cli', 'unknown', null]);
 const paneSource = (src) => PANE_SOURCES.has(src == null || src === '' ? null : String(src).replace(/^"|"$/g, '').trim().toLowerCase());
+
+/** stat of a rollout, or of its compressed copy: Codex zstd-compresses old logs and the database keeps the old name. */
+function statRollout(file) {
+  for (const f of file.endsWith('.zst') ? [file] : [file, file + '.zst']) {
+    try {
+      return { file: f, st: fs.statSync(f) };
+    } catch {}
+  }
+  return null;
+}
 
 /** Codex's thread list from its state database, or null when it can't be read. */
 export function codexStateThreads(home, env = process.env) {
@@ -274,17 +288,16 @@ export function codexStateThreads(home, env = process.env) {
 function codexDbCandidates(cwd, threads, names) {
   const out = [];
   for (const t of threads) {
-    if (t.sub || !paneSource(t.source) || !t.file) continue;
+    if (t.sub || !t.file) continue;
     const rel = folderRelation(t.cwd, cwd);
     if (!rel) continue;
-    let st;
-    try {
-      st = fs.statSync(t.file);
-    } catch {
-      continue;
-    }
+    const hit = statRollout(t.file);
+    if (!hit) continue;
     const titles = [t.name, t.id ? names.get(t.id) : null].filter(Boolean);
-    out.push({ agent: 'codex', file: t.file, rel, cwd: t.cwd, mtimeMs: st.mtimeMs, id: t.id, title: titles[0] ?? null, titles });
+    out.push({
+      agent: 'codex', file: hit.file, rel, cwd: t.cwd, mtimeMs: hit.st.mtimeMs, id: t.id, title: titles[0] ?? null, titles,
+      titleOnly: !paneSource(t.source),
+    });
   }
   return out;
 }
@@ -294,11 +307,14 @@ function codexCandidates(cwd, rollouts, cache, names, seen) {
   for (const r of rollouts) {
     seen.add(r.path);
     const m = codexMeta(r.path, cache);
-    if (m.sub || !paneSource(m.source)) continue;
+    if (m.sub) continue;
     const rel = folderRelation(m.cwd, cwd);
     if (!rel) continue;
     const name = m.id ? names.get(m.id) ?? null : null;
-    out.push({ agent: 'codex', file: r.path, rel, cwd: m.cwd, mtimeMs: r.mtimeMs, id: m.id, title: name, titles: name ? [name] : [] });
+    out.push({
+      agent: 'codex', file: r.path, rel, cwd: m.cwd, mtimeMs: r.mtimeMs, id: m.id, title: name, titles: name ? [name] : [],
+      titleOnly: !paneSource(m.source),
+    });
   }
   return out;
 }
@@ -358,14 +374,19 @@ export function assign(items) {
       return c.titles.some((t) => {
         const n = t.trim().toLowerCase();
         if (thread) return thread.prefix ? n.startsWith(thread.name) : n === thread.name;
-        return n.length >= 3 && k.includes(n); // a custom title layout
+        // a custom title layout: too loose for threads started outside a terminal
+        return !c.titleOnly && n.length >= 3 && k.includes(n);
       });
     }
     return c.titles.some((t) => titleKey(t) === k);
   };
-  // 1. exact title matches
+  // 1. exact title matches (Codex: in the title's project first, as names repeat across projects)
   for (const it of items) {
-    const c = it.cands.filter((x) => !taken.has(x.file) && titleMatches(it, x)).sort((a, b) => b.mtimeMs - a.mtimeMs)[0];
+    const proj = it.agent === 'codex' ? codexTitleProject(it.title) : null;
+    const inProj = (x) => (proj && inProject(x.cwd, proj) ? 0 : 1);
+    const c = it.cands
+      .filter((x) => !taken.has(x.file) && titleMatches(it, x))
+      .sort((a, b) => inProj(a) - inProj(b) || b.mtimeMs - a.mtimeMs)[0];
     if (c) {
       taken.add(c.file);
       result.set(it.pane, { cand: c, how: 'title', others: 0 });
@@ -377,7 +398,8 @@ export function assign(items) {
     if (result.has(it.pane)) continue;
     const k = titleKey(it.title);
     const specific = k && !GENERIC_TITLE.test(k);
-    let free = it.cands.filter((x) => !taken.has(x.file));
+    // threads started outside a terminal are never guessed by folder: only a name ties one to a pane
+    let free = it.cands.filter((x) => !taken.has(x.file) && !x.titleOnly);
     // Codex: a pane started in a parent folder sees every sub-project's sessions;
     // the project named in its title narrows them down
     if (it.agent === 'codex') {
@@ -428,8 +450,11 @@ export function matchPanes(panes, { env = process.env, projectsDir = claudeProje
       const k = norm(c.file)?.toLowerCase();
       if (!byFile.has(k)) byFile.set(k, c);
     }
-    const diag = `Codex: database ${threads ? `${threads.length} threads, ${fromDb.length} here` : 'not readable'} · logs ${rollouts.length} scanned, ${fromLogs.length} here`;
-    return { ...p, cands: [...byFile.values()], diag };
+    const cands = [...byFile.values()];
+    const titleOnly = cands.filter((c) => c.titleOnly).length;
+    const diag = `Codex: database ${threads ? `${threads.length} threads, ${fromDb.length} here` : 'not readable'} · logs ${rollouts.length} scanned, ${fromLogs.length} here`
+      + (titleOnly ? ` · ${titleOnly} from the app/exec (name match only)` : '');
+    return { ...p, cands, diag };
   });
   const byKind = (k) => assign(items.filter((i) => i.agent === k));
   const pairs = new Map([...byKind('claude'), ...byKind('codex')]);
