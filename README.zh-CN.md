@@ -5,7 +5,7 @@
 看清编程 agent 的上下文窗口里装了什么、这些内容从哪来，以及每个订阅还剩多少额度。
 目前先做数据层和命令行工具，接下来在此基础上做 [Herdr](https://herdr.dev) mod。
 
-上下文分析目前支持 **Claude Code**（下一步是 Codex，见路线图）。
+上下文分析支持 **Claude Code** 和 **Codex**。
 订阅用量支持 Claude、Codex、Kiro，并可通过 quota-axi 覆盖 Cursor、Copilot 等。
 
 ```
@@ -49,15 +49,16 @@ Herdr 自带的布局是只读的，所以安装脚本会另外生成一个布�
 不使用这个布局时，可以把面板作为窗格打开：
 `herdr-app do pane.split --direction right --mod herdr-context`。
 支持 Windows：npm 以 `.cmd` 包装文件形式安装的命令（claude、codex、quota-axi）也能被找到，并且不经过 shell 直接启动。
-同时建议配置 statusLine 采集器（安装脚本会打印出完整的配置行），否则面板只显示 token 数量，不显示百分比。
+百分比开箱即用（窗口大小来自日志或 Claude Code 自带的模型表）；statusLine 采集器是可选的，见下文。
 
 工作原理：
 - mod 不能使用 Node，所以它只负责显示。数据通过 Herdr 的 `exec` 运行打包在一起的命令行工具获取：
   上下文每 15 秒刷新一次（`--list --json --recent 48`），订阅用量每 2 分钟刷新一次（`quota --json`；点刷新按钮时会加上 `--refresh`）。
-- 窗格和会话按文件夹匹配：当前终端运行的是 Claude Code 时，取工作目录与它相同（或包含它、或在它里面）的最新一个会话。
+- 窗格和会话按 agent 和文件夹匹配：当前终端运行的是 Claude Code（或 Codex）时，取这个 agent 的、
+  工作目录与它相同（或包含它、或在它里面）的最新一个会话。
   焦点在面板本身时，显示这个标签页里最近聚焦过的终端。没有 agent 的窗格不会借用别人的会话，
-  而是列出这个工作区里的 Claude agent（点击可跳转过去）；工作区里有多个 agent 时也会显示这个列表。
-  上下文目前只支持 Claude Code，其他 agent 的窗格会显示说明。
+  而是列出这个工作区里的 Claude Code 和 Codex agent（点击可跳转过去）；工作区里有多个 agent 时也会显示这个列表。
+  其他 agent 的窗格会显示暂不支持的说明。
 - 支持英文和简体中文：点面板右上角的 中/EN 按钮切换（保存在 Herdr 的共享状态里，面板和状态栏小标签一起切换，重启后保留）。
   通用的专业名词在两种语言里都保持英文：tokens、cache、agent、System Prompt、ctx。
 - Claude 的重置时间（如 "Nov 22, 2:20am (Asia/Shanghai)"）按本地时间解析，和其他提供方一样显示为相对时间（"2 小时 5 分后"）。
@@ -71,17 +72,27 @@ Herdr 自带的布局是只读的，所以安装脚本会另外生成一个布�
 
 ```sh
 node bin/herdr-context.js                 # 最近一个会话
-node bin/herdr-context.js --list          # 最近的会话列表
+node bin/herdr-context.js --list          # 最近的会话列表（Claude Code 和 Codex）
+node bin/herdr-context.js --agent codex   # 只看一种 agent（claude | codex）
 node bin/herdr-context.js --session 1dea  # 按会话 ID 前缀查找
 node bin/herdr-context.js --cwd ~/work/api
 node bin/herdr-context.js --json          # 给 Herdr mod 或脚本用的 JSON 输出
 ```
 
-### 上下文窗口大小和订阅额度（推荐配置）
+### 上下文窗口大小
 
-会话日志里没有记录上下文窗口大小，也没有 5 小时和 7 天的额度。
-Claude Code 会把这两项数据传给它的 statusLine 命令，所以需要注册我们的采集器
-（它不输出任何内容，也不会影响状态栏）：
+百分比 = 上下文 token 数 ÷ 模型的上下文窗口大小。窗口大小的来源：
+
+- **Codex** 直接写在日志里（`model_context_window`）。
+- **Claude Code** 的日志里没有，所以按可靠程度依次取：`HERDR_CONTEXT_WINDOW`；statusLine 数据（见下文）；
+  出现过超过 200k 的请求（只有 1M 窗口才可能）；否则用 Claude Code 自带的模型表
+  （从 Claude Code 程序里读出来的：Opus 4.7 及以后、Sonnet 5 及以后、Haiku 5.5 和 Fable 系列是 1M，更早的是 200k）。
+  模型表唯一会判断错的情况：较早的 200k 模型加了 `[1m]` 后缀运行，并且上下文还没超过 200k。配置采集器可以解决这个问题。
+
+### statusLine 采集器（可选）
+
+Claude Code 会把准确的窗口大小、它自己算的百分比以及 5 小时 / 7 天额度传给 statusLine 命令。
+注册我们的采集器就能用上这些数据（它不输出任何内容，也不会影响状态栏）：
 
 ```json
 // ~/.claude/settings.json
@@ -90,7 +101,7 @@ Claude Code 会把这两项数据传给它的 statusLine 命令，所以需要�
 
 如果你已经有自己的状态栏脚本，可以串在后面继续使用：`... claude-statusline-collector.js --then '~/.claude/statusline.sh'`。
 采集到的数据保存在 `~/.cache/herdr-context/claude-statusline/<session>.json`。
-不配置采集器的话，只显示 token 数量，不显示百分比（也可以用 `HERDR_CONTEXT_WINDOW` 环境变量手动指定窗口大小）。
+不配置也完全可以用：窗口大小取自模型表，Claude 的额度通过 `claude -p "/usage"` 获取。
 
 ## 订阅用量：`herdr-context quota`
 
@@ -165,13 +176,27 @@ Kiro 的注意事项：它没有公开的 API，输出格式一旦变化，解�
 | token 总量、缓存命中率 | `message.usage`，**每个 requestId 只计一次**（一次响应在日志里会拆成多条记录） | 实测 |
 | 压缩事件 | `system` / `compact_boundary` 记录（`compactMetadata.preTokens`）加上下一次请求的大小 | 实测 |
 | 成本 | Claude Code 自己的 `cost-state` 记录（最后一次保存的值，可能略有滞后） | Claude Code 报告 |
-| 窗口大小、占用百分比、5 小时 / 7 天额度 | statusLine 数据 | 官方数据，可能缺失 |
+| 窗口大小 | statusLine 数据，否则用 Claude Code 的模型表（见上文） | 官方 / 模型表 |
+| 占用百分比（Claude Code 自己算的）、5 小时 / 7 天额度 | statusLine 数据 | 官方数据，可能缺失 |
 | 组成拆分（按类别） | 实测总量，按估算的文本大小拆分（约 4 个字符 1 个 token，中日韩文字 1 个字 1 个 token） | **估算** |
 | 系统提示与工具定义 | 有内部 `prompt_snapshot` 记录时据此拆分，否则合并为一个"system+tools"块 | **估算** |
 | 文件、工具、子 agent | `tool_use` 块；`<session>/subagents/*.jsonl` | 实测 |
 
 日志格式是 Claude Code 内部使用的，不同版本之间可能变化。遇到未知的记录类型或损坏的行，只计数并显示，不会导致程序出错。
 已在 Claude Code 2.1.330 上验证。
+
+Codex（`$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl[.zst]`），依据 codex-rs 源码里的 rollout 和 protocol 类型：
+
+| 数据 | 来源 | 可信度 |
+|---|---|---|
+| 上下文 token 数、窗口大小、趋势 | `event_msg` / `token_count`：`info.last_token_usage.total_tokens`（Codex 自己就是这样计算窗口占用的）和 `info.model_context_window`；没有新用量的重复事件会被跳过 | 实测 |
+| token 总量、缓存命中率 | `info.total_token_usage`（`input_tokens` 已包含 `cached_input_tokens`） | 实测 |
+| 压缩事件 | `compacted` 记录；压缩前后的大小取自前后相邻的 `token_count` | 实测 |
+| 组成拆分 | 最近一次压缩以来的 `response_item` 消息、工具调用和工具输出，方法和 Claude Code 相同；Codex 自己注入的指令和环境信息算作"注入内容" | **估算** |
+| 文件 | `apply_patch`（修改 / 新增），shell 命令里的 `cat`、`sed -n`、`head`、`tail`、`nl`（读取） | 实测，读取是按命令推断的 |
+
+子 agent 线程（`session_meta` 里有 `parent_thread_id`）不会出现在列表里。
+还没有用真实的 Codex 日志验证过：如果数字看起来不对，请发一份 `--json` 输出给我们。
 
 ## 目录结构
 
@@ -181,6 +206,8 @@ src/claude/session.js      把日志记录汇总成摘要（纯函数，不读�
 src/claude/load.js         单个会话 + 子 agent + statusLine → 快照
 src/claude/statusline.js   statusLine 数据的保存、读取和规范化
 src/claude/discover.js     查找会话日志
+src/claude/models.js       每个 Claude 模型的上下文窗口大小（来自 Claude Code 的模型表）
+src/codex/                 Codex rollout 日志 → 相同结构的快照
 src/quota/                 订阅用量：claude（statusLine）、claude-cli（/usage）、claude-direct、
                            codex（日志）、codex-rpc（app-server）、kiro、quota-axi、index（数据源顺序）
 src/herdr-layout.js        根据 Herdr 的 main 布局生成 main-context 布局
@@ -196,11 +223,9 @@ test/                      node --test 测试，使用合成的样本数据和�
 
 ## 路线图
 
-1. **Codex 上下文分析**：读取 `~/.codex/sessions/**` 里的事件：`token_count`
-   （`info.last_token_usage`、`model_context_window`、`rate_limits.primary/secondary`）
-   和 `context_compacted`。需要一份真实样本来确认。
-2. **Herdr mod**：状态栏小标签 + 右侧边栏的 Context 面板（main-context 布局）。下一步：在真实窗口里试用；
-   面板支持 Codex 上下文；增量读取日志，避免每次轮询都重新解析整个日志。
+1. **Codex 上下文分析**：已完成。下一步：用真实的 rollout 日志确认。
+2. **Herdr mod**：状态栏小标签 + 右侧边栏的 Context 面板（main-context 布局）。
+   下一步：增量读取日志，避免每次轮询都重新解析整个日志。
 3. **订阅用量**：已完成（Claude 的 statusLine / `/usage` / 直连模式，Codex 的日志 / app-server，Kiro，quota-axi）。
    下一步：用真实输出验证 Claude `/usage` 文本和 Kiro；不依赖 quota-axi 支持 Cursor。
 4. Cursor 上下文分析：调研它的 CLI 在本地留下了哪些数据。

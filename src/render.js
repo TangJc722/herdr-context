@@ -79,13 +79,14 @@ function resets(at) {
 export function renderSession(s) {
   const L = [];
   const id = s.sessionId ? s.sessionId.slice(0, 8) : '?';
-  L.push(`claude · ${id} · ${s.cwd ?? '?'}${s.gitBranch ? ` (${s.gitBranch})` : ''} · ${s.model ?? '?'}${s.version ? ` · v${s.version}` : ''}`);
+  L.push(`${s.agent ?? 'claude'} · ${id} · ${s.cwd ?? '?'}${s.gitBranch ? ` (${s.gitBranch})` : ''} · ${s.model ?? '?'}${s.version ? ` · v${s.version}` : ''}`);
 
   const c = s.context;
   if (c.window) {
-    L.push(`  Context   ${bar(c.percent)} ${fmt(c.tokens)} / ${fmt(c.window)} (${pct(c.percent)})`);
+    const src = { model: ' · window from the model table', observed: ' · 1M window (a prompt went past 200k)' }[c.windowSource] ?? '';
+    L.push(`  Context   ${bar(c.percent)} ${fmt(c.tokens)} / ${fmt(c.window)} (${pct(c.percent)})${src}`);
   } else {
-    L.push(`  Context   ${fmt(c.tokens)} tokens  (window size unknown: install the statusLine collector or set HERDR_CONTEXT_WINDOW)`);
+    L.push(`  Context   ${fmt(c.tokens)} tokens  (window size unknown for this model: set HERDR_CONTEXT_WINDOW or install the statusLine collector)`);
   }
   if (c.officialPercent != null) L.push(`            Claude Code reports ${Math.round(c.officialPercent)}% used`);
   if (s.trend.length) L.push(`  Trend     ${sparkline(s.trend)}  ${s.requestCount} requests`);

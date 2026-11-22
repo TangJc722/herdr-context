@@ -50,14 +50,23 @@ export function choosePane(focus, paneList, lastPane) {
 
 const newest = (list) => list.slice().sort((a, b) => String(b.lastTs ?? "").localeCompare(String(a.lastTs ?? "")))[0] ?? null;
 
-/** The Claude session for a pane's folder: same folder first (newest),
- *  else the newest session whose folder contains it or sits inside it. */
-export function pickSession(sessions, cwd) {
+/** Which agent a pane runs, as far as the context view goes: "claude" | "codex" | null. */
+export function agentKind(app) {
+  const a = String(app ?? "").toLowerCase();
+  if (a.includes("claude")) return "claude";
+  if (a.includes("codex")) return "codex";
+  return null;
+}
+
+/** The session for a pane's folder (of one agent, when given): same folder
+ *  first (newest), else the newest session whose folder contains it or sits inside it. */
+export function pickSession(sessions, cwd, agent = null) {
   const want = normPath(cwd);
   if (!want || !Array.isArray(sessions)) return null;
-  const exact = sessions.filter((s) => normPath(s.cwd) === want);
+  const mine = agent ? sessions.filter((s) => (s.agent ?? "claude") === agent) : sessions;
+  const exact = mine.filter((s) => normPath(s.cwd) === want);
   if (exact.length) return newest(exact);
-  const near = sessions.filter((s) => {
+  const near = mine.filter((s) => {
     const c = normPath(s.cwd);
     return c && (want.startsWith(c + "/") || c.startsWith(want + "/"));
   });
@@ -231,11 +240,11 @@ export function trendBars(values, n = 48, max = 26, min = 3) {
   return v.map((x) => Math.round(min + ((x - lo) / (hi - lo)) * (max - min)));
 }
 
-/** Claude agents in a space, each with its session (by its pane's folder). */
+/** Claude Code and Codex agents in a space, each with its session (by its pane's folder). */
 export function spaceAgents(agentList, paneList, sessions, spaceId) {
   const byPane = new Map((paneList ?? []).map((p) => [p.pane, p]));
   return (agentList ?? [])
-    .filter((a) => (!spaceId || a.space === spaceId) && /claude/i.test(a.app ?? ""))
+    .filter((a) => (!spaceId || a.space === spaceId) && agentKind(a.app))
     .map((a) => {
       const cwd = byPane.get(a.pane)?.cwd ?? null;
       // An unnamed tab is called by its number ("1") or by its program ("Claude Code"):
@@ -244,7 +253,8 @@ export function spaceAgents(agentList, paneList, sessions, spaceId) {
       const generic = !tn || /^\d+$/.test(tn) || /^(claude( code)?|codex|bash|zsh|fish|sh|pwsh|powershell|cmd)$/i.test(tn);
       const named = generic ? null : tn;
       const title = a.pane_name || named || baseName(cwd) || a.title || a.app;
-      return { address: a.address, title, status: a.status, cwd, session: pickSession(sessions, cwd) };
+      const kind = agentKind(a.app);
+      return { address: a.address, title, kind, status: a.status, cwd, session: pickSession(sessions, cwd, kind) };
     });
 }
 

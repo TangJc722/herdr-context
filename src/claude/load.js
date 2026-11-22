@@ -4,16 +4,26 @@ import path from 'node:path';
 import { JsonlTail } from '../jsonl-tail.js';
 import { ClaudeSession } from './session.js';
 import { readStatusline } from './statusline.js';
+import { modelWindow, canExtendTo1M } from './models.js';
 
 /**
- * Context window size: env override > statusLine payload > unknown.
- * The logs do not record it, and guessing from the model name gives wrong
- * percentages, so without a source we show token counts only.
+ * Context window size. The log does not record it, so, most reliable first:
+ *   env        HERDR_CONTEXT_WINDOW
+ *   statusline Claude Code's own number, when the collector is installed
+ *   observed   a prompt above 200k proves a 1M window
+ *   model      Claude Code's model table (200k models can run at 1M with the
+ *              "[1m]" suffix, which only the two sources above can see)
+ * @param {{model?:string, peakTokens?:number}} [seen] what the log shows
  */
-export function resolveContextWindow(statusline, env = process.env) {
+export function resolveContextWindow(statusline, env = process.env, seen = {}) {
   const override = Number(env.HERDR_CONTEXT_WINDOW);
   if (Number.isFinite(override) && override > 0) return { size: override, source: 'env' };
   if (statusline?.contextWindowSize) return { size: statusline.contextWindowSize, source: 'statusline' };
+  const byModel = modelWindow(seen.model);
+  if (byModel && byModel < 1_000_000 && (seen.peakTokens ?? 0) > byModel && canExtendTo1M(seen.model)) {
+    return { size: 1_000_000, source: 'observed' };
+  }
+  if (byModel) return { size: byModel, source: 'model' };
   return { size: null, source: 'unknown' };
 }
 
@@ -46,7 +56,9 @@ export function loadClaudeSession(entry, opts = {}) {
   });
 
   const statusline = readStatusline(snap.sessionId, opts.statuslineDir);
-  const window = resolveContextWindow(statusline, opts.env);
+  // only the current model's requests: a session can switch models
+  const peakTokens = Math.max(0, ...session.requests.filter((q) => q.model === snap.model).map((q) => q.prompt));
+  const window = resolveContextWindow(statusline, opts.env, { model: snap.model, peakTokens });
   snap.context = {
     tokens: snap.contextTokens,
     window: window.size,

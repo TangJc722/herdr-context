@@ -84,7 +84,10 @@ test('redesign helpers: trend bars, paths, agents, providers, reset times', () =
   assert.equal(logic.displayPath('c:/WORK/x.js', 'C:\\work', null).full, 'x.js');
   assert.equal(logic.displayPath('/etc/hosts', '/w', '/home/me').full, '/etc/hosts');
 
-  const sessions = [{ sessionId: 'a', cwd: '/w/api', lastTs: '2026-11-21T10:00:00Z' }];
+  const sessions = [
+    { agent: 'claude', sessionId: 'a', cwd: '/w/api', lastTs: '2026-11-21T10:00:00Z' },
+    { agent: 'codex', sessionId: 'cx', cwd: '/w/api', lastTs: '2026-11-21T09:00:00Z' },
+  ];
   const list = logic.spaceAgents(
     [
       { address: 't1', pane: 'p1', space: 's1', tab_name: '1', title: 'Claude Code', app: 'claude-code', status: 'working' },
@@ -92,11 +95,16 @@ test('redesign helpers: trend bars, paths, agents, providers, reset times', () =
       { address: 't3', pane: 'p3', space: 's1', tab_name: 'x', app: 'codex', status: 'idle' },
       { address: 't4', pane: 'p4', space: 's2', tab_name: 'y', app: 'claude-code', status: 'idle' },
     ],
-    [{ pane: 'p1', cwd: '/w/api' }, { pane: 'p2', cwd: '/w/web' }],
+    [{ pane: 'p1', cwd: '/w/api' }, { pane: 'p2', cwd: '/w/web' }, { pane: 'p3', cwd: '/w/api' }],
     sessions,
     's1',
   );
-  assert.deepEqual(list.map((a) => [a.title, a.session?.sessionId ?? null]), [['api', 'a'], ['fix login', null]]);
+  // each agent gets its own kind of session, even in the same folder
+  assert.deepEqual(list.map((a) => [a.title, a.kind, a.session?.sessionId ?? null]), [['api', 'claude', 'a'], ['fix login', 'claude', null], ['x', 'codex', 'cx']]);
+  assert.equal(logic.agentKind('Codex'), 'codex');
+  assert.equal(logic.agentKind('pwsh'), null);
+  assert.equal(logic.pickSession(sessions, '/w/api', 'codex').sessionId, 'cx');
+  assert.equal(logic.pickSession(sessions, '/w/api').sessionId, 'a', 'no agent given: newest of any');
 
   const { shown, missing } = logic.splitProviders({
     providers: [
@@ -288,7 +296,7 @@ test('mod main.js: fetches through the bundled CLI and draws panel and chip', as
   await cx.settle();
   assert.deepEqual(cx.timers, [15000, 120000]);
   const calls = globalThis.__herdr.execCalls.map((c) => c.slice(2).join(' '));
-  assert.ok(calls.includes('--list --json --limit 8 --recent 48'), calls.join(' | '));
+  assert.ok(calls.includes('--list --json --limit 12 --recent 48'), calls.join(' | '));
   assert.ok(calls.includes('quota --json'), calls.join(' | '));
   assert.equal(m.error, null);
   assert.equal(m.quotaError, null);
@@ -304,7 +312,9 @@ test('mod main.js: fetches through the bundled CLI and draws panel and chip', as
   // another folder: explains instead of showing the wrong session
   globalThis.__herdr.focused = { cwd: '/elsewhere' };
   globalThis.__herdr.panes = [{ pane: 'p2', terminal: 'tm2', tab: 't1', focused: true, cwd: '/elsewhere', app: 'codex' }];
-  assert.ok(texts(m.render()).includes('codex: the context view supports Claude Code for now.'));
+  assert.ok(texts(m.render()).includes('codex: no session log for this folder in the last 48 hours yet.'));
+  globalThis.__herdr.panes = [{ pane: 'p2', terminal: 'tm2', tab: 't1', focused: true, cwd: '/elsewhere', app: 'cursor-agent' }];
+  assert.ok(texts(m.render()).includes('cursor-agent: the context view supports Claude Code and Codex for now.'));
 
   // a plain shell (no agent) in a parent folder: no borrowed session, the space's agents instead
   globalThis.__herdr.focused = { space: 's1', tab: 't2', pane: 'p3', terminal: 'tm3', cwd: '/' };

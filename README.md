@@ -6,7 +6,7 @@ What is in your coding agent's context window, where it came from, and how much
 of each subscription you have left.
 A data layer and CLI first; a [Herdr](https://herdr.dev) mod on top next.
 
-Context analysis supports **Claude Code** today (Codex next, see Roadmap).
+Context analysis supports **Claude Code** and **Codex**.
 Subscription usage covers Claude, Codex and Kiro, plus Cursor, Copilot and others through quota-axi.
 
 ```
@@ -53,19 +53,20 @@ layout. Without the layout, open the panel as a pane:
 `herdr-app do pane.split --direction right --mod herdr-context`.
 Works on Windows: commands installed by npm as `.cmd` shims (claude, codex,
 quota-axi) are found and started without a shell.
-Set up the statusLine collector too (the installer prints the exact line), or
-the panel shows token counts without a percentage.
+The % works out of the box (window sizes come from the logs or Claude Code's
+model table); the statusLine collector is optional, see below.
 
 How it works:
 - Mods can't use Node, so the mod only draws. It runs the bundled CLI with
   Herdr's `exec`: context every 15 s (`--list --json --recent 48`), subscriptions
   every 2 min (`quota --json`; the refresh button adds `--refresh`).
-- The pane ↔ session match is by folder: when the focused terminal runs Claude
-  Code, the newest session whose folder is its own (or contains it / sits inside
-  it). With the panel itself focused, it describes the tab's last focused
-  terminal. A pane without an agent borrows nothing; the panel lists the space's
-  Claude agents instead (click one to go to it), as it also does whenever a space
-  has several. Context is Claude Code only for now; other agents' panes say so.
+- The pane ↔ session match is by agent and folder: when the focused terminal
+  runs Claude Code (or Codex), that agent's newest session whose folder is its
+  own (or contains it / sits inside it). With the panel itself focused, it
+  describes the tab's last focused terminal. A pane without an agent borrows
+  nothing; the panel lists the space's Claude Code and Codex agents instead
+  (click one to go to it), as it also does whenever a space has several. Other
+  agents' panes say they are not supported yet.
 - English or Simplified Chinese: the 中/EN button in the panel header (kept in
   Herdr's shared state, so panel and chip switch together and it is remembered).
   Established terms stay English in both: tokens, cache, agent, System Prompt, ctx.
@@ -84,16 +85,29 @@ Requires Node 18+. No dependencies.
 
 ```sh
 node bin/herdr-context.js                 # latest session
-node bin/herdr-context.js --list          # recent sessions
+node bin/herdr-context.js --list          # recent sessions, Claude Code and Codex
+node bin/herdr-context.js --agent codex   # only one agent (claude | codex)
 node bin/herdr-context.js --session 1dea  # by id prefix
 node bin/herdr-context.js --cwd ~/work/api
 node bin/herdr-context.js --json          # for the Herdr mod / scripts
 ```
 
-### Context-window size and subscription limits (recommended)
+### Context-window size
 
-Session logs do not record the context-window size or the 5-hour / 7-day limits.
-Claude Code hands both to its statusLine command, so register the collector
+The % is context tokens ÷ the model's context window. Where the window size comes from:
+
+- **Codex** writes it into its log (`model_context_window`).
+- **Claude Code** does not, so, most reliable first: `HERDR_CONTEXT_WINDOW`; the
+  statusLine payload (below); a prompt larger than 200k (only a 1M window allows
+  that); else Claude Code's own model table (read from the Claude Code binary:
+  Opus 4.7+, Sonnet 5+, Haiku 5.5 and the Fable models are 1M; older ones 200k).
+  The one case the table gets wrong: an older 200k model run with the `[1m]`
+  suffix, until its context passes 200k. The collector fixes that.
+
+### statusLine collector (optional)
+
+Claude Code hands its statusLine command the exact window size, its own % and
+the 5-hour / 7-day limits. Register the collector to use them
 (it prints nothing and never breaks the status line):
 
 ```json
@@ -103,7 +117,8 @@ Claude Code hands both to its statusLine command, so register the collector
 
 Keep an existing status line by chaining it: `... claude-statusline-collector.js --then '~/.claude/statusline.sh'`.
 Payloads are saved to `~/.cache/herdr-context/claude-statusline/<session>.json`.
-Without the collector, token counts are shown but no percentage (or set `HERDR_CONTEXT_WINDOW`).
+Without it everything still works: the window comes from the model table, and
+Claude's limits from `claude -p "/usage"`.
 
 ## Subscription usage: `herdr-context quota`
 
@@ -183,7 +198,8 @@ checked against a live kiro-cli**.
 | Token totals, cache hit | `message.usage`, counted **once per requestId** (one response is logged as several records) | measured |
 | Compactions | `system` / `compact_boundary` records (`compactMetadata.preTokens`) + the next request's size | measured |
 | Cost | Claude Code's own `cost-state` records (last saved, may lag) | reported by Claude Code |
-| Window size, % used, 5h / 7d limits | statusLine payload | official, may be missing |
+| Window size | statusLine payload, else Claude Code's model table (see above) | official / table |
+| % used (Claude Code's own), 5h / 7d limits | statusLine payload | official, may be missing |
 | Makeup (split by category) | measured total split by estimated text size (~4 chars/token, CJK 1/token) | **estimate** |
 | System prompt vs tool definitions | internal `prompt_snapshot` records when present, else one "system+tools" block | **estimate** |
 | Files, tools, sub-agents | `tool_use` blocks; `<session>/subagents/*.jsonl` | measured |
@@ -191,6 +207,20 @@ checked against a live kiro-cli**.
 The log format is internal to Claude Code and changes between versions. Unknown
 record types and malformed lines are counted and shown, never fatal.
 Checked against Claude Code 2.1.330.
+
+Codex (`$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl[.zst]`), from codex-rs's
+rollout and protocol types:
+
+| Figure | Source | Confidence |
+|---|---|---|
+| Context tokens, window, trend | `event_msg` / `token_count`: `info.last_token_usage.total_tokens` (what Codex itself counts as in the window) and `info.model_context_window`; repeats without new usage are skipped | measured |
+| Token totals, cache hit | `info.total_token_usage` (`input_tokens` includes `cached_input_tokens`) | measured |
+| Compactions | `compacted` records; size before/after from the neighbouring `token_count` | measured |
+| Makeup | `response_item` messages, tool calls and outputs since the last compaction, as for Claude Code; Codex's own instructions and environment messages count as "injected" | **estimate** |
+| Files | `apply_patch` (edited / added), `cat`, `sed -n`, `head`, `tail`, `nl` in shell commands (read) | measured, reads are a heuristic |
+
+Sub-agent threads (`parent_thread_id` in `session_meta`) are left out of the list.
+Not yet checked against a real Codex log: send one `--json` output if numbers look off.
 
 ## Layout
 
@@ -200,6 +230,8 @@ src/claude/session.js      folds log records into a summary (pure, no I/O)
 src/claude/load.js         one session + sub-agents + statusLine → snapshot
 src/claude/statusline.js   statusLine payload save / read / normalize
 src/claude/discover.js     finds session logs
+src/claude/models.js       context window per Claude model (Claude Code's table)
+src/codex/                 Codex rollout logs → the same snapshot shape
 src/quota/                 subscription usage: claude (statusLine), claude-cli (/usage), claude-direct,
                            codex (logs), codex-rpc (app-server), kiro, quota-axi, index (source order)
 src/herdr-layout.js        builds the main-context layout from Herdr's main
@@ -215,11 +247,9 @@ test/                      node --test, synthetic fixtures; a fake codex app-ser
 
 ## Roadmap
 
-1. **Codex adapter**: `~/.codex/sessions/**` rollout events: `token_count`
-   (`info.last_token_usage`, `model_context_window`, `rate_limits.primary/secondary`)
-   and `context_compacted`. Needs a real sample to confirm.
-2. **Herdr mod**: status-bar chip + Context panel in the right sidebar (main-context layout). Next: try it in a live window,
-   Codex context in the panel, an incremental reader so polling never re-parses whole logs.
+1. **Codex context**: done. Next: confirm against a real rollout log.
+2. **Herdr mod**: status-bar chip + Context panel in the right sidebar (main-context layout).
+   Next: an incremental reader so polling never re-parses whole logs.
 3. **Quota**: done (Claude statusLine / `/usage` / direct, Codex logs / app-server, Kiro, quota-axi).
    Next: verify Claude `/usage` text and Kiro against live reports; Cursor without quota-axi.
 4. Cursor context: research what its CLI leaves on disk.

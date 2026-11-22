@@ -43,7 +43,7 @@ export function listRollouts(sessionsDir, { maxFiles = 8 } = {}) {
   return out.sort((a, b) => b.mtimeMs - a.mtimeMs);
 }
 
-function readRollout(p) {
+export function readRollout(p) {
   const buf = fs.readFileSync(p);
   if (!p.endsWith('.zst')) return buf.toString('utf8');
   if (typeof zlib.zstdDecompressSync !== 'function') throw new Error('this Node has no zstd support (needs Node 22.15+)');

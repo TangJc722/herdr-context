@@ -10,7 +10,7 @@ import { h_flex, v_flex } from "gpui-base";
 import { exec, appHome, home, readTextFile, theme, focused, panes, agents, spaces, props, checking, layout, run, shared, setShared } from "herdr";
 import {
   choosePane, pickSession, fmt, pctText, level, worstWindow, errorLine, panelState, toggleCommands,
-  makeupParts, displayPath, trendBars, spaceAgents, splitProviders, providerName, baseName,
+  makeupParts, displayPath, trendBars, spaceAgents, agentKind, splitProviders, providerName, baseName,
 } from "./logic.js";
 import { translator, categoryLabel, windowLabel, resetsText, agoText, normLang } from "./i18n.js";
 import { SAMPLE_SESSIONS, SAMPLE_QUOTA, SAMPLE_AGENTS } from "./sample.js";
@@ -76,7 +76,7 @@ export default class HerdrContext extends View {
     this.loading = true;
     cx.spawn(async (cx) => {
       try {
-        this.sessions = await this.cli(["--list", "--json", "--limit", "8", "--recent", "48"]);
+        this.sessions = await this.cli(["--list", "--json", "--limit", "12", "--recent", "48"]);
         this.error = null;
         this.at = Date.now();
       } catch (e) {
@@ -113,10 +113,10 @@ export default class HerdrContext extends View {
     const target = choosePane(f, panes(), this.lastPane);
     if (target.pane) this.lastPane = target.pane;
     const sessions = this.sessions ?? [];
-    // Only a pane running Claude gets a session: a plain shell in a parent
-    // folder must not borrow a sub-folder's agent.
-    const isClaude = /claude/i.test(target.app ?? "");
-    const session = isClaude ? pickSession(sessions, target.cwd) : null;
+    // Only a pane running an agent gets a session, and only that agent's: a
+    // plain shell in a parent folder must not borrow a sub-folder's agent.
+    const kind = agentKind(target.app);
+    const session = kind ? pickSession(sessions, target.cwd, kind) : null;
     const space = f?.space ?? spaces().find((s) => s.active)?.id ?? null;
     return { pane: target, cwd: target.cwd, session, agents: spaceAgents(agents(), panes(), sessions, space) };
   }
@@ -193,7 +193,7 @@ export default class HerdrContext extends View {
         .child(div().pb(4).text_size(11.5).text_color(t.muted)
           .child(c.window ? tr("tokensOf", { used: fmt(c.tokens), window: fmt(c.window) }) : tr("tokensInContext"))));
     if (pct != null) card.child(this.bar(t, c.percent, this.color(t, pct), 6));
-    else card.child(div().text_size(11).text_color(t.dim).child(tr("addCollector")));
+    else card.child(div().text_size(11).text_color(t.dim).child(tr("windowUnknown")));
 
     const bars = trendBars(session.trend, 48);
     if (bars.length > 1) {
@@ -277,6 +277,7 @@ export default class HerdrContext extends View {
     } else {
       const why = this.sessions == null ? tr("loading")
         : !cwd ? tr("noTerminal")
+        : agentKind(pane?.app) ? tr("noSessionLog", { app: pane.app })
         : pane?.app ? tr("otherAgent", { app: pane.app })
         : list.length ? tr("noAgentPick") : tr("noAgent");
       out.push(v_flex().p(12).rounded(10).border(1).border_color(t.border)

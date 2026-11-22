@@ -46,7 +46,7 @@ test('collector saves the payload, chains, and never breaks on bad input', () =>
   assert.equal(bad.stdout, '');
 });
 
-test('context window: env > statusline > unknown', () => {
+test('context window: env > statusline > unknown (no model)', () => {
   assert.deepEqual(resolveContextWindow(null, {}), { size: null, source: 'unknown' });
   assert.deepEqual(resolveContextWindow({ contextWindowSize: 5000 }, {}), { size: 5000, source: 'statusline' });
   assert.deepEqual(resolveContextWindow({ contextWindowSize: 5000 }, { HERDR_CONTEXT_WINDOW: '9000' }), { size: 9000, source: 'env' });
@@ -79,4 +79,20 @@ test('discovery + load: sub-agents, statusline merge, percent', () => {
 
   const noSl = loadClaudeSession(entries[0], { statuslineDir: tmp(), env: {} });
   assert.equal(noSl.context.percent, null);
+});
+
+test('context window without statusLine: observed > Claude Code model table', async () => {
+  const { modelWindow, modelBase } = await import('../src/claude/models.js');
+  assert.equal(modelBase('claude-opus-4-5-20251101'), 'claude-opus-4-5');
+  assert.equal(modelBase('us.anthropic.claude-sonnet-4-5-20250929-v1:0'), 'claude-sonnet-4-5');
+  assert.equal(modelWindow('claude-opus-5-5'), 1_000_000);
+  assert.equal(modelWindow('claude-sonnet-4-5-20250929'), 200_000);
+  assert.equal(modelWindow('claude-sonnet-7'), 1_000_000, 'newer generations are 1M');
+  assert.equal(modelWindow('claude-3-5-sonnet-20241022'), null);
+  assert.equal(modelWindow('<synthetic>'), null);
+  assert.deepEqual(resolveContextWindow(null, {}, { model: 'claude-opus-5-5' }), { size: 1_000_000, source: 'model' });
+  assert.deepEqual(resolveContextWindow(null, {}, { model: 'claude-sonnet-4-6', peakTokens: 150_000 }), { size: 200_000, source: 'model' });
+  // a 200k-default model that went past 200k must be running with [1m]
+  assert.deepEqual(resolveContextWindow(null, {}, { model: 'claude-sonnet-4-6', peakTokens: 250_000 }), { size: 1_000_000, source: 'observed' });
+  assert.deepEqual(resolveContextWindow({ contextWindowSize: 200_000 }, {}, { model: 'claude-opus-5-5' }), { size: 200_000, source: 'statusline' });
 });

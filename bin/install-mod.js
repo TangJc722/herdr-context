@@ -93,5 +93,5 @@ The status-bar chip on the right (ctx % · fullest subscription) opens and close
 the Context panel in the right sidebar, next to Files and Changes.
 
 Check it:  herdr-app check "${dest}"
-Recommended, for context % and Claude limits, in ~/.claude/settings.json:
+Optional (exact Claude window size and limits from Claude Code itself), in ~/.claude/settings.json:
   "statusLine": { "type": "command", "command": "\\"${process.execPath.replace(/\\/g, '\\\\')}\\" \\"${collector.replace(/\\/g, '\\\\')}\\"" }`);
