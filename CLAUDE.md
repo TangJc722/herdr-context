@@ -64,9 +64,16 @@ Antigravity CLI `agy` (`~/.gemini/antigravity-cli`; Herdr calls the pane's app "
 - `/usage` buckets: weekly per group, plus `3p-5h` (window "5h") for Claude/GPT; an unused
   bucket has `reset_time` 1970-01-01 (= none). `--log-file <path>` keeps a run out of agy's
   `log/` folder (else one file per run). The plan/tier is in none of the print-mode answers
-  (`/usage`, `/quota`, `/credits`): only in agy's login entry (Windows Credential Manager
-  `gemini:antigravity`, with tokens): don't read it. An unknown slash command goes to the
-  model (num_turns > 0, spends quota): the probe stops for a day when it sees that.
+  (`/usage`, `/quota`, `/credits`) nor in agy's keyring entry (Credential Manager
+  `gemini:antigravity`: token, auth_method, e-mail only; don't read it anyway). It is in the
+  statusLine payload (`plan_tier`, also `quota` buckets, `version`, and `email`: never keep
+  that), which agy sends to a custom statusLine command in interactive sessions only. agy runs
+  that command via cmd.exe with `"` escaped to `\"`: quoted paths break, use `node` + a path
+  without spaces. `stack_with_default: true` keeps agy's own line when ours prints nothing.
+  Try a statusLine with `--settings <file>` (session only, never saved; put the folder in its
+  `trustedWorkspaces` to skip the trust prompt), not by editing settings.json.
+  An unknown slash command goes to the model (num_turns > 0, spends quota): the probe
+  stops for a day when it sees that.
 - From Git Bash, `agy -p "/usage"` becomes `C:/Program Files/Git/usage` (MSYS path
   conversion) and goes to the model: run agy from PowerShell, or `MSYS_NO_PATHCONV=1`.
 - Sample tool data: `agy -p "<task>" --mode accept-edits` in a scratch folder (headless

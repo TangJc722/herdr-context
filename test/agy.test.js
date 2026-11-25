@@ -12,6 +12,9 @@ import { matchPanes } from '../src/match.js';
 import { parseAgyUsage, agyQuota } from '../src/quota/agy.js';
 import { agyBest } from '../src/quota/index.js';
 import { renderQuotas } from '../src/render.js';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { writeAgyStatusline, readAgyStatusline, shortPlan, agyStatuslineFile } from '../src/agy/statusline.js';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'hc-agy-'));
 
@@ -246,4 +249,43 @@ test('agy quota: /usage answered by the model (an agy without the command) is no
   agyQuota({ run: chat, env, now: NOW + 7200e3, refresh: true }); // Refresh asks again
   assert.equal(runs, 2);
   assert.equal(agyQuota({ run: () => ({ ok: true, stdout: USAGE_JSON, stderr: '' }), env, now: NOW + 26 * 3600e3 }).source, 'agy /usage');
+});
+
+// agy's statusLine payload (agy 1.5.17), synthetic values; the e-mail must never be kept
+const SL_PAYLOAD = {
+  cwd: 'C:\\w', session_id: '', conversation_id: '', model: { id: 'Gemini 4 Hydrogen (High)' }, version: '1.5.17',
+  context_window: { context_window_size: 1048576, used_percentage: 0 }, product: 'antigravity',
+  quota: { 'gemini-weekly': { remaining_fraction: 0.69, reset_time: '2026-12-02T05:50:59Z', reset_in_seconds: 566205 } },
+  agent_state: 'idle', plan_tier: 'Antigravity Starter Quota', email: 'someone@example.com', terminal_width: 200,
+};
+
+test('agy statusLine: keeps the plan tier (never the e-mail); the quota card shows it, passive too', () => {
+  const env = { XDG_CACHE_HOME: tmp() };
+  const NOW = Date.parse('2026-11-26T01:00:00Z');
+  assert.equal(writeAgyStatusline({ product: 'other', plan_tier: 'x' }, { env }), null);
+  assert.equal(writeAgyStatusline({ product: 'antigravity' }, { env }), null, 'nothing useful');
+  const file = writeAgyStatusline(SL_PAYLOAD, { env, now: new Date(NOW) });
+  assert.equal(file, agyStatuslineFile(env));
+  assert.ok(!fs.readFileSync(file, 'utf8').includes('example.com'), 'no e-mail on disk');
+  assert.deepEqual(readAgyStatusline({ env }), { receivedAt: '2026-11-26T01:00:00.000Z', planTier: 'Antigravity Starter Quota', version: '1.5.17', quota: SL_PAYLOAD.quota });
+  assert.equal(shortPlan('Antigravity Starter Quota'), 'Starter');
+  assert.equal(shortPlan('Google AI Pro'), 'AI Pro');
+  assert.equal(shortPlan(''), null);
+  const q = agyQuota({ run: () => ({ ok: true, stdout: USAGE_JSON, stderr: '' }), env, now: NOW });
+  assert.equal(q.plan, 'Starter');
+  assert.match(renderQuotas({ providers: [q] }), /\[Starter\]/);
+  assert.equal(agyBest({ active: false, env, now: NOW }).plan, 'Starter');
+  // no statusLine reading: no plan, nothing else changes
+  const bare = { XDG_CACHE_HOME: tmp() };
+  assert.equal(agyQuota({ run: () => ({ ok: true, stdout: USAGE_JSON, stderr: '' }), env: bare, now: NOW }).plan, null);
+});
+
+test('agy statusLine collector: prints nothing, records the payload, never fails', () => {
+  const bin = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'agy-statusline-collector.js');
+  const env = { ...process.env, XDG_CACHE_HOME: tmp() };
+  const r = spawnSync(process.execPath, [bin], { input: JSON.stringify(SL_PAYLOAD), env, encoding: 'utf8' });
+  assert.deepEqual([r.status, r.stdout], [0, '']);
+  assert.equal(readAgyStatusline({ env }).planTier, 'Antigravity Starter Quota');
+  const bad = spawnSync(process.execPath, [bin], { input: 'not json', env, encoding: 'utf8' });
+  assert.deepEqual([bad.status, bad.stdout], [0, '']);
 });

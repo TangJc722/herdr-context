@@ -10,6 +10,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { quota, runCommand, stripAnsi, quotaCacheDir, toIso, readCache, writeCache } from './common.js';
+import { readAgyStatusline, shortPlan } from '../agy/statusline.js';
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const BLOCK_MS = 24 * 3600 * 1000;
@@ -88,7 +89,21 @@ export function agyInstalled({ env = process.env, platform = process.platform, e
   return f && exists(f) ? f : null;
 }
 
-export function agyQuota({ run = runCommand, env = process.env, now = Date.now(), refresh = false, timeoutMs = 45000, platform = process.platform, exists } = {}) {
+/**
+ * agy's quota, with its plan when agy's statusLine has told us (bin/agy-statusline-collector.js):
+ * no print-mode command names the plan.
+ */
+export function agyQuota(opts = {}) {
+  return withAgyPlan(agyProbe(opts), opts.env);
+}
+
+/** A reading with the plan agy's statusLine last reported, if any. */
+export function withAgyPlan(q, env = process.env) {
+  const tier = q?.windows?.length ? readAgyStatusline({ env })?.planTier : null;
+  return tier ? { ...q, plan: shortPlan(tier) } : q;
+}
+
+function agyProbe({ run = runCommand, env = process.env, now = Date.now(), refresh = false, timeoutMs = 45000, platform = process.platform, exists } = {}) {
   if (!refresh) {
     const c = readCache('agy', CACHE_TTL_MS, { env, now });
     if (c) return { ...c, source: 'agy /usage (cached)' };

@@ -87,6 +87,11 @@ if (argv.includes('--no-layout')) {
 }
 
 const collector = path.join(cliDir, 'bin', 'claude-statusline-collector.js');
+const agyCollector = path.join(cliDir, 'bin', 'agy-statusline-collector.js');
+// agy runs it through cmd.exe and escapes double quotes on the way: no quoted paths, `node` from PATH
+const agyHint = /\s/.test(agyCollector)
+  ? `(not possible here: agy's statusLine cannot run a path with a space; set HERDR_APP_HOME to a folder without one)`
+  : `"statusLine": { "type": "command", "command": "node ${agyCollector.replace(/\\/g, '\\\\')}", "stack_with_default": true }`;
 console.log(`${layoutNote}
 
 The status-bar chip on the right (ctx % · fullest subscription) opens and closes
@@ -94,4 +99,6 @@ the Context panel in the right sidebar, next to Files and Changes.
 
 Check it:  herdr-app check "${dest}"
 Optional (exact Claude window size and limits from Claude Code itself), in ~/.claude/settings.json:
-  "statusLine": { "type": "command", "command": "\\"${process.execPath.replace(/\\/g, '\\\\')}\\" \\"${collector.replace(/\\/g, '\\\\')}\\"" }`);
+  "statusLine": { "type": "command", "command": "\\"${process.execPath.replace(/\\/g, '\\\\')}\\" \\"${collector.replace(/\\/g, '\\\\')}\\"" }
+Optional (the Antigravity plan, which only agy's status line names), in ~/.gemini/antigravity-cli/settings.json:
+  ${agyHint}`);

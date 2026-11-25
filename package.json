@@ -5,7 +5,8 @@
   "type": "module",
   "bin": {
     "herdr-context": "bin/herdr-context.js",
-    "herdr-context-statusline": "bin/claude-statusline-collector.js"
+    "herdr-context-statusline": "bin/claude-statusline-collector.js",
+    "herdr-context-agy-statusline": "bin/agy-statusline-collector.js"
   },
   "scripts": {
     "test": "node --test test/*.test.js",

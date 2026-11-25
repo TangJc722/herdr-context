@@ -16,7 +16,7 @@ import { claudeCliQuota } from './claude-cli.js';
 import { codexQuota } from './codex.js';
 import { codexRpcQuota } from './codex-rpc.js';
 import { kiroQuota } from './kiro.js';
-import { agyQuota } from './agy.js';
+import { agyQuota, withAgyPlan } from './agy.js';
 import { quotaAxi } from './quota-axi.js';
 import { readCache, writeCache, isFresh } from './common.js';
 
@@ -78,7 +78,7 @@ export async function codexBest(o = {}) {
 export function agyBest({ refresh = false, active = true, now = Date.now(), env = process.env, agy = {} } = {}) {
   if (active) return agyQuota({ refresh, now, env, ...agy });
   const c = readCache('agy', Infinity, { env, now });
-  return c ? { ...c, source: 'agy /usage (cached)' } : null;
+  return c ? withAgyPlan({ ...c, source: 'agy /usage (cached)' }, env) : null;
 }
 
 export async function collectQuotas(opts = {}) {

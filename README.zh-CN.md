@@ -204,8 +204,19 @@ Antigravity：`/usage` 是 agy 自己的命令。在打印模式下它直接在�
 `agy` 不在 PATH 里时（在 agy 安装之前就已启动的程序，比如 Herdr，用的还是旧的 PATH），会去它的安装目录
 `%LOCALAPPDATA%\agy\bin` 找。查询时 agy 的日志写到探测目录，而不是 agy 自己的日志目录（否则每次都多一个文件）。
 如果某个版本的 agy 把 `/usage` 当成普通提问发给了模型（输出里会有 turns），一天内不再查询，免得每 10 分钟消耗一次额度；
-点刷新会重试。不显示套餐：agy 的打印模式命令（`/usage`、`/quota`、`/credits`）都没有给出套餐，
-agy 只把它和登录 token 存在一起，本工具不读那里。已在 2026 年 11 月的 agy CLI 上验证。不使用 Antigravity 的内部额度接口。
+点刷新会重试。套餐：agy 的打印模式命令（`/usage`、`/quota`、`/credits`）都没有给出套餐，
+agy 的状态栏数据里有（`plan_tier`，比如 "Antigravity Starter Quota"，显示为 "Starter"）。
+要显示它，在 `~/.gemini/antigravity-cli/settings.json` 里加上 agy 的采集器（`install-mod` 会打印这一行）：
+
+```json
+{ "statusLine": { "type": "command", "command": "node C:\\path\\to\\herdr-context\\bin\\agy-statusline-collector.js", "stack_with_default": true } }
+```
+
+它不输出任何内容（`stack_with_default` 保留 agy 自己的状态栏），只把套餐档位、agy 版本和额度数据存到
+`~/.cache/herdr-context/quota/agy-statusline.json`，不保存数据里同时带着的账号邮箱。
+agy 通过 cmd.exe 运行这条命令，并且会转义双引号，所以路径里不能有空格，`node` 要从 PATH 里找。
+它只在交互式 agy 会话里运行（`-p` 不会），所以要等启动过一个 agy 会话后才显示套餐。
+已在 2026 年 11 月的 agy CLI（1.5.17）上验证。不使用 Antigravity 的内部额度接口。
 
 ## 每个数字从哪里来
 
@@ -257,7 +268,8 @@ src/claude/statusline.js   statusLine 数据的保存、读取和规范化
 src/claude/discover.js     查找会话日志
 src/claude/models.js       每个 Claude 模型的上下文窗口大小（来自 Claude Code 的模型表）
 src/codex/                 Codex rollout 日志 → 相同结构的快照
-src/agy/                   Antigravity CLI 会话 → 相同结构的快照
+src/agy/                   Antigravity CLI 会话 → 相同结构的快照；
+                           statusline.js：从 agy 的 statusLine 数据里取套餐
 src/match.js               把每个 Herdr 窗格对应到它自己的会话（终端标题、正在打开的会话、文件夹）
 src/quota/                 订阅用量：claude（statusLine）、claude-cli（/usage）、claude-direct、
                            codex（日志）、codex-rpc（app-server）、kiro、agy（/usage）、quota-axi、index（数据源顺序）

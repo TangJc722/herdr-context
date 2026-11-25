@@ -244,9 +244,22 @@ PATH), its install folder `%LOCALAPPDATA%\agy\bin` is tried. agy's log of the
 check goes to the probe folder, not agy's own log folder (one file per run
 otherwise). Should an agy ever send `/usage` to the model instead (it then
 reports turns), the check stops for a day rather than spend quota every 10 min;
-Refresh tries again. No plan is shown: none of agy's print-mode commands
-(`/usage`, `/quota`, `/credits`) names it, and agy keeps it only with its login
-tokens, which this tool does not read. Checked against the agy CLI of 2026-11.
+Refresh tries again. The plan: none of agy's print-mode commands (`/usage`,
+`/quota`, `/credits`) names it; agy's status line does (`plan_tier`, e.g.
+"Antigravity Starter Quota", shown as "Starter"). To get it, add agy's collector
+to `~/.gemini/antigravity-cli/settings.json` (`install-mod` prints the line):
+
+```json
+{ "statusLine": { "type": "command", "command": "node C:\\path\\to\\herdr-context\\bin\\agy-statusline-collector.js", "stack_with_default": true } }
+```
+
+It prints nothing (`stack_with_default` keeps agy's own status line) and saves
+only the plan tier, agy's version and the quota buckets to
+`~/.cache/herdr-context/quota/agy-statusline.json`, never the account e-mail the
+payload also carries. agy runs the command through cmd.exe and escapes double
+quotes on the way, so the path must have no spaces and `node` comes from PATH.
+It runs in interactive agy sessions only (not `-p`), so the plan appears once an
+agy session has started. Checked against the agy CLI of 2026-11 (1.5.17).
 Antigravity's internal quota endpoints are not used.
 
 ## Where each number comes from
@@ -301,7 +314,8 @@ src/claude/statusline.js   statusLine payload save / read / normalize
 src/claude/discover.js     finds session logs
 src/claude/models.js       context window per Claude model (Claude Code's table)
 src/codex/                 Codex rollout logs → the same snapshot shape
-src/agy/                   Antigravity CLI conversations → the same snapshot shape
+src/agy/                   Antigravity CLI conversations → the same snapshot shape;
+                           statusline.js: the plan from agy's statusLine payload
 src/match.js               pairs each Herdr pane with its own session (terminal title, open conversation, folder)
 src/quota/                 subscription usage: claude (statusLine), claude-cli (/usage), claude-direct,
                            codex (logs), codex-rpc (app-server), kiro, agy (/usage), quota-axi, index (source order)
