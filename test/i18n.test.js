@@ -25,6 +25,7 @@ test('labels: categories, quota windows', () => {
   assert.equal(windowLabel('5h', 'zh'), '5 小时');
   assert.equal(windowLabel('week', 'zh'), '每周');
   assert.equal(windowLabel('Sonnet week', 'zh'), 'Sonnet 每周');
+  assert.equal(windowLabel('Claude/GPT 5h', 'zh'), 'Claude/GPT 5 小时');
   assert.equal(windowLabel('GPT-5.5-Codex week', 'zh'), 'GPT-5.5-Codex 每周');
   assert.equal(windowLabel('week', 'en'), 'week');
 });

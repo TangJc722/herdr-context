@@ -26,12 +26,16 @@ claude · 1dea6540 · ~/work/api (main) · claude-opus-5-5 · v2.1.330
 
 ## Herdr mod
 
-For the [Herdr app](https://herdr.dev/app) (checked against Herdr 0.1.16):
+For the [Herdr app](https://herdr.dev/app) (checked against Herdr 0.1.18):
 a **chip in the status bar** (`ctx 62% · codex week 81%`: the focused pane's
 context and the fullest subscription window) that opens and closes a **Context
 panel in the right sidebar**, next to Files and Changes. The panel shows the
 pane's context (occupancy, trend, makeup, compactions, files) and every
-subscription's usage, refreshed on its own.
+subscription's usage, refreshed on its own. Two buttons in its header make it
+take less room: ⇥ **compact** narrows the sidebar to 248 px and keeps the key
+numbers only (context %, the space's agents, one bar per limit; hover for
+makeup shares and reset times), ⇤ goes back to the width it had; ▾ **minimizes**
+it to the status-bar chip, which opens it again.
 
 ```sh
 git clone https://github.com/TangJc722/herdr-context && cd herdr-context
@@ -93,6 +97,9 @@ How it works:
   Code and Codex agents instead (click one to go to it), as it also does
   whenever a space has several. Other agents' panes say they are not supported
   yet; a session with no reply yet (e.g. signed out) says so.
+- Compact goes by the sidebar's width (under 280 px), as Herdr's own sidebar
+  rail does: dragging its edge narrow compacts it too. Files and Changes share
+  that sidebar, so they get the same width.
 - English or Simplified Chinese: the 中/EN button in the panel header (kept in
   Herdr's shared state, so panel and chip switch together and it is remembered).
   Established terms stay English in both: tokens, cache, agent, System Prompt, ctx.
@@ -227,13 +234,20 @@ The parser is built from CodexBar's documented format and **has not yet been
 checked against a live kiro-cli**.
 
 Antigravity: `/usage` is agy's own command. In print mode it answers locally
-(no model call, no tokens, no conversation saved) with one weekly bucket per
-model group (Gemini; Claude and GPT), as remaining fractions. It takes about
+(no model call, no tokens, no conversation saved) with a weekly bucket per
+model group (Gemini; Claude and GPT) and a 5-hour one for Claude and GPT, as
+remaining fractions; a limit not used yet has no reset time. It takes about
 10 s, hence the cache; `--passive` shows only an earlier reading. A failed check
 (network, sign-in) keeps the last reading and says why. When `agy` is not on
 PATH (a program started before agy was installed, such as Herdr, keeps the old
-PATH), its install folder `%LOCALAPPDATA%\agy\bin` is tried. Checked against
-the agy CLI of 2026-11. Antigravity's internal quota endpoints are not used.
+PATH), its install folder `%LOCALAPPDATA%\agy\bin` is tried. agy's log of the
+check goes to the probe folder, not agy's own log folder (one file per run
+otherwise). Should an agy ever send `/usage` to the model instead (it then
+reports turns), the check stops for a day rather than spend quota every 10 min;
+Refresh tries again. No plan is shown: none of agy's print-mode commands
+(`/usage`, `/quota`, `/credits`) names it, and agy keeps it only with its login
+tokens, which this tool does not read. Checked against the agy CLI of 2026-11.
+Antigravity's internal quota endpoints are not used.
 
 ## Where each number comes from
 

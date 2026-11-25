@@ -11,6 +11,7 @@ import { exec, appHome, home, readTextFile, theme, focused, panes, agents, space
 import {
   choosePane, fmt, pctText, level, worstWindow, errorLine, panelState, toggleCommands,
   makeupParts, displayPath, trendBars, spaceAgents, agentKind, splitProviders, providerName, baseName,
+  isCompact, compactCommands, COMPACT_WIDTH,
 } from "./logic.js";
 import { translator, categoryLabel, windowLabel, resetsText, agoText, normLang } from "./i18n.js";
 import { SAMPLE_SESSIONS, SAMPLE_QUOTA, SAMPLE_AGENTS } from "./sample.js";
@@ -19,6 +20,7 @@ const CONTEXT_EVERY_MS = 15_000;
 const QUOTA_EVERY_MS = 120_000;
 const MOD_DIR = () => `${appHome()}/mods/herdr-context`;
 const LANG_KEY = "herdr-context.lang";
+const WIDTH_KEY = "herdr-context.panelWidth"; // the sidebar's width before going compact
 
 export default class HerdrContext extends View {
   init(_props, cx) {
@@ -176,18 +178,29 @@ export default class HerdrContext extends View {
     for (const [cmd, args] of toggleCommands(panelState(layout()))) run(cmd, args);
   }
 
-  header(t, tr) {
+  toggleCompact() {
+    const { save, commands } = compactCommands(layout(), shared(WIDTH_KEY));
+    if (save != null) setShared(WIDTH_KEY, save);
+    for (const [cmd, args] of commands) run(cmd, args);
+  }
+
+  header(t, tr, compact) {
     const busy = this.loading || this.quotaLoading;
-    const open = panelState(layout()).open;
+    const { open, inSidebar } = panelState(layout());
     const zh = this.lang() === "zh";
     return h_flex().h(28).gap(2).items_center()
-      .child(div().flex_1().text_size(13).font_semibold().text_color(t.foreground).child(tr("title")))
-      .child(div().text_size(11).text_color(t.dim).pr(4).child(busy ? tr("updating") : agoText(this.at, this.lang())))
+      .child(div().flex_1().text_size(13).font_semibold().text_color(t.foreground).truncate().child(tr("title")))
+      .when(!compact, (el) => el.child(div().text_size(11).text_color(t.dim).pr(4).child(busy ? tr("updating") : agoText(this.at, this.lang()))))
+      .when(compact && busy, (el) => el.child(div().text_size(11).text_color(t.dim).pr(2).child("…")))
       .child(this.iconButton(t, "hc-lang", div().text_size(11).child(zh ? "EN" : "中"), tr("langTip"),
         () => setShared(LANG_KEY, zh ? "en" : "zh")))
       .child(this.iconButton(t, "hc-refresh", "↻", tr("refreshTip"),
         (_e, cx) => { this.refreshContext(cx); this.refreshQuota(cx, true); }))
-      .when(open, (el) => el.child(this.iconButton(t, "hc-close", "✕", tr("closeTip"), () => this.toggle())));
+      // narrow the sidebar to the key numbers, or back
+      .when(inSidebar, (el) => el.child(this.iconButton(t, "hc-compact", compact ? "⇤" : "⇥", tr(compact ? "wideTip" : "compactTip"),
+        () => this.toggleCompact())))
+      // minimize to the status-bar chip, which opens it again
+      .when(open, (el) => el.child(this.iconButton(t, "hc-close", "▾", tr("closeTip"), () => this.toggle())));
   }
 
   // ---------- the focused agent ----------
@@ -358,6 +371,72 @@ export default class HerdrContext extends View {
     return this.section(t, title, this.quotaAt ? agoText(this.quotaAt, this.lang()) : null, ...out);
   }
 
+  // ---------- compact: a narrow sidebar with the key numbers only ----------
+
+  compactFocus(t, tr, session, cwd, match) {
+    const c = session.context ?? {};
+    const pct = c.percent != null ? c.percent * 100 : null;
+    const parts = makeupParts(session);
+    return v_flex().id("hc-c-focus").gap(6).p(10).rounded(8).bg(t.surface).border(1).border_color(t.border)
+      .tooltip([session.cwd, session.model, match ? `${tr("matchedBy")}: ${match.how}` : null].filter(Boolean).join("\n"))
+      .child(h_flex().gap(6).items_center()
+        .child(div().flex_1().text_size(12).font_semibold().text_color(t.foreground).truncate().child(baseName(session.cwd ?? cwd) || "—"))
+        .child(div().text_size(16).font_semibold().text_color(pct != null ? this.valueColor(t, pct) : t.foreground)
+          .child(pct != null ? pctText(c.percent) : fmt(c.tokens))))
+      .when(pct != null, (el) => el.child(this.bar(t, c.percent, this.color(t, pct), 5)))
+      .child(div().text_size(10.5).text_color(t.dim).truncate()
+        .child(c.window ? tr("tokensOf", { used: fmt(c.tokens), window: fmt(c.window) }) : tr("tokensInContext")))
+      // the makeup as one stacked bar; hover for the shares
+      .when(parts.length > 0, (el) => el.child(h_flex().id("hc-c-makeup").w_full().h(5).rounded(3).overflow_hidden().gap(1)
+        .tooltip(parts.map((p) => `${categoryLabel(p.key, this.lang())} ${pctText(p.share)}`).join("\n"))
+        .children(parts.map((p) => div().h_full().w(`${p.share * 100}%`).bg(t[p.color] ?? t.accent)))));
+  }
+
+  compactAgents(t, list, focusedPane) {
+    return v_flex().gap(1).children(list.map((a, i) => {
+      const c = a.session?.context ?? {};
+      const pct = c.percent != null ? c.percent * 100 : null;
+      return h_flex().id(`hc-c-agent-${i}`).gap(6).px(6).py(4).rounded(5).items_center().cursor_pointer()
+        .when(Boolean(a.pane) && a.pane === focusedPane, (el) => el.bg(t.selected))
+        .hover((s) => s.bg(t.hover))
+        .tooltip(a.cwd ?? "")
+        .on_click(() => { if (!this.preview) run("agent.focus", { terminal: a.address }); })
+        .child(div().w(6).h(6).rounded_full().bg(t[a.status] ?? t.idle))
+        .child(div().flex_1().text_size(11.5).text_color(t.foreground).truncate().child(a.title))
+        .child(div().text_size(11).text_color(pct != null ? this.valueColor(t, pct) : t.muted)
+          .child(c.tokens == null ? "—" : pct != null ? pctText(c.percent) : fmt(c.tokens)));
+    }));
+  }
+
+  compactProvider(t, p) {
+    const lang = this.lang();
+    // "Claude/GPT 5 小时" needs the room; "5h" / "每周" don't
+    const labelW = p.windows.some((w) => windowLabel(w.label, lang).length > 8) ? 100 : 52;
+    return v_flex().gap(5).p(8).rounded(8).bg(t.surface).border(1).border_color(t.border)
+      .child(h_flex().gap(5).items_center()
+        .child(div().text_size(11.5).font_semibold().text_color(t.foreground).truncate().child(providerName(p.provider)))
+        .when(Boolean(p.plan), (el) => el.child(div().px(4).rounded(3).bg(t.raised).text_size(9.5).text_color(t.muted).child(String(p.plan)))))
+      .children(p.windows.map((w, i) => {
+        // hover a row for when it resets
+        const when = w.resetsAt ? resetsText(w.resetsAt, lang) : (w.detail ?? "").replace(/^resets /, "");
+        return h_flex().id(`hc-c-${p.provider}-${i}`).gap(6).items_center().when(Boolean(when), (el) => el.tooltip(when))
+          .child(div().w(labelW).text_size(10.5).text_color(t.muted).truncate().child(windowLabel(w.label, lang)))
+          .child(div().flex_1().child(this.bar(t, w.usedPercent / 100, this.color(t, w.usedPercent), 4)))
+          .child(div().w(30).text_size(11).font_semibold().text_color(this.valueColor(t, w.usedPercent)).child(`${Math.round(w.usedPercent)}%`));
+      }));
+  }
+
+  compactBody(t, tr) {
+    const { pane, cwd, session, match, agents: list } = this.current();
+    const out = [];
+    if (session) out.push(this.compactFocus(t, tr, session, cwd, match));
+    else if (this.error && !this.sessions) out.push(div().text_size(11).text_color(t.blocked).child(this.error));
+    if (list.length && (!session || list.length > 1)) out.push(this.compactAgents(t, list, pane?.pane));
+    if (this.quota) out.push(v_flex().gap(6).children(splitProviders(this.quota).shown.map((p) => this.compactProvider(t, p))));
+    else if (this.quotaError) out.push(div().text_size(11).text_color(t.blocked).child(this.quotaError));
+    return v_flex().gap(12).children(out);
+  }
+
   // ---------- views ----------
 
   renderChip(t, tr) {
@@ -389,12 +468,20 @@ export default class HerdrContext extends View {
     const t = theme();
     const tr = translator(this.lang());
     if (props()?.view === "chip") return this.renderChip(t, tr);
+    if (!this.preview && isCompact(layout())) {
+      return v_flex().id("hc-root").size_full().bg(t.chrome).px(10).pt(10).pb(12).gap(12).text_color(t.foreground)
+        .overflow_y_scrollbar()
+        .child(this.header(t, tr, true))
+        .child(this.compactBody(t, tr));
+    }
     return v_flex().id("hc-root").size_full().bg(t.chrome).px(14).pt(10).pb(14).gap(18).text_color(t.foreground)
       .overflow_y_scrollbar()
-      .child(this.header(t, tr))
+      .child(this.header(t, tr, false))
       .child(this.contextPart(t, tr))
       .child(this.quotaPart(t, tr))
-      // `herdr-app check` renders the default view only: draw the chip too so it gets checked
-      .when(this.preview, (el) => el.child(div().h(28).child(this.renderChip(t, tr))));
+      // `herdr-app check` renders the default view only: draw the chip and the compact form too so they get checked
+      .when(this.preview, (el) => el
+        .child(div().h(28).child(this.renderChip(t, tr)))
+        .child(v_flex().w(COMPACT_WIDTH).gap(12).child(this.header(t, tr, true)).child(this.compactBody(t, tr))));
   }
 }

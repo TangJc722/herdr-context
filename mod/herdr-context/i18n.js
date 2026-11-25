@@ -7,7 +7,9 @@ const STRINGS = {
     title: "Context",
     updating: "updating…",
     refreshTip: "Refresh now (also re-asks every subscription)",
-    closeTip: "Close (or click the chip in the status bar)",
+    closeTip: "Minimize to the status bar (click the ctx chip at the bottom to open again)",
+    compactTip: "Compact: a narrow sidebar with the key numbers only",
+    wideTip: "Full view (back to the width it had)",
     langTip: "中文",
     tokensInContext: "tokens in context",
     tokensOf: "{used} of {window} tokens",
@@ -45,7 +47,9 @@ const STRINGS = {
     title: "上下文",
     updating: "更新中…",
     refreshTip: "立即刷新（同时重新查询所有订阅）",
-    closeTip: "关闭（也可以点击状态栏上的小标签）",
+    closeTip: "收起到底部状态栏（点底部的 ctx 标签可再展开）",
+    compactTip: "精简：侧栏变窄，只留关键数字",
+    wideTip: "完整视图（恢复原来的宽度）",
     langTip: "English",
     tokensInContext: "tokens 在上下文中",
     tokensOf: "{used} / {window} tokens",
@@ -113,7 +117,7 @@ export function windowLabel(label, lang) {
   if (normLang(lang) === "en" || !label) return label;
   const fixed = { "5h": "5 小时", week: "每周", month: "每月", bonus: "赠送额度" };
   if (fixed[label]) return fixed[label];
-  return String(label).replace(/ week$/, " 每周").replace(/ month$/, " 每月");
+  return String(label).replace(/ week$/, " 每周").replace(/ month$/, " 每月").replace(/ 5h$/, " 5 小时");
 }
 
 /** "in 2h 5m" / "2 小时 5 分后", from an ISO time; "" if unknown. */

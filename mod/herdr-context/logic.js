@@ -193,6 +193,28 @@ export function toggleCommands(state) {
     : [["layout.select", { stack: "panel-body", child: "context" }], ["layout.show", { id: "panel" }]];
 }
 
+/** Below this width the panel draws its compact form. It goes by the width, not a
+ *  flag (as Herdr's own sidebar rail does): dragging the edge narrow compacts it too. */
+export const COMPACT_PX = 280;
+export const COMPACT_WIDTH = 248;
+export const WIDE_WIDTH = 368;
+
+export function isCompact(layoutTree) {
+  const px = findNode(layoutTree, "panel")?.size?.px;
+  return Number.isFinite(px) && px < COMPACT_PX;
+}
+
+/** Narrow the right sidebar to the compact width, or back to the width it had.
+ *  @returns {{save: number|null, commands: Array<[string, object]>}} save = the wide width to remember */
+export function compactCommands(layoutTree, savedWidth) {
+  const px = findNode(layoutTree, "panel")?.size?.px;
+  if (isCompact(layoutTree)) {
+    const back = Number.isFinite(savedWidth) && savedWidth >= COMPACT_PX ? savedWidth : WIDE_WIDTH;
+    return { save: null, commands: [["layout.resize", { id: "panel", px: back }]] };
+  }
+  return { save: Number.isFinite(px) ? px : null, commands: [["layout.resize", { id: "panel", px: COMPACT_WIDTH }]] };
+}
+
 /** Theme colour names for each makeup category (theme().ansiN), stable across views. */
 export const CATEGORY_COLORS = {
   toolResult: "ansi4",

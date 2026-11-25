@@ -178,7 +178,11 @@ const USAGE_JSON = JSON.stringify({
   usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
   command: { name: 'usage', data: { groups: [
     { name: 'Gemini Models', buckets: [{ id: 'gemini-weekly', name: 'Weekly Limit Remaining', window: 'weekly', remaining_fraction: 0.9725, reset_time: '2026-11-29T09:26:23Z' }] },
-    { name: 'Claude and GPT models', buckets: [{ id: '3p-weekly', name: 'Weekly Limit Remaining', window: 'weekly', remaining_fraction: 1, reset_time: '2026-11-29T12:57:53Z' }] },
+    // an unused window resets at 1970-01-01 (agy 2026-11-25)
+    { name: 'Claude and GPT models', buckets: [
+      { id: '3p-weekly', name: 'Weekly Limit Remaining', window: 'weekly', remaining_fraction: 1, reset_time: '1970-01-01T00:00:00Z' },
+      { id: '3p-5h', name: 'Five Hour Limit Remaining', window: '5h', remaining_fraction: 0.8, reset_time: '2026-11-22T15:00:00Z' },
+    ] },
   ] } },
 });
 
@@ -187,10 +191,13 @@ test('agy /usage: JSON groups, else the tab-separated text', () => {
   assert.deepEqual(j.windows.map((w) => [w.id, w.label, w.usedPercent, w.windowMinutes]), [
     ['gemini-weekly', 'Gemini week', 2.75, 10080],
     ['3p-weekly', 'Claude/GPT week', 0, 10080],
+    ['3p-5h', 'Claude/GPT 5h', 20, 300],
   ]);
-  assert.equal(j.windows[0].resetsAt, '2026-11-29T09:26:23.000Z');
-  const t = parseAgyUsage('Gemini Models\tWeekly Limit Remaining\t97%\t2026-11-29T09:26:23Z\nClaude and GPT models\tWeekly Limit Remaining\t100%\t2026-11-29T12:57:10Z\n');
-  assert.deepEqual(t.windows.map((w) => [w.label, w.usedPercent]), [['Gemini week', 3], ['Claude/GPT week', 0]]);
+  assert.deepEqual(j.windows.map((w) => w.resetsAt), ['2026-11-29T09:26:23.000Z', null, '2026-11-22T15:00:00.000Z']);
+  const t = parseAgyUsage('Gemini Models\tWeekly Limit Remaining\t97%\t2026-11-29T09:26:23Z\nClaude and GPT models\tWeekly Limit Remaining\t100%\t1970-01-01T00:00:00Z\nClaude and GPT models\tFive Hour Limit Remaining\t100%\t1970-01-01T00:00:00Z\n');
+  assert.deepEqual(t.windows.map((w) => [w.label, w.usedPercent, w.windowMinutes, w.resetsAt]), [
+    ['Gemini week', 3, 10080, '2026-11-29T09:26:23.000Z'], ['Claude/GPT week', 0, 10080, null], ['Claude/GPT 5h', 0, 300, null],
+  ]);
   assert.equal(parseAgyUsage('Please sign in'), null);
 });
 
@@ -200,8 +207,9 @@ test('agy quota: runs `agy -p /usage` in its own empty folder, caches 10 min; pa
   const calls = [];
   const run = (cmd, args, o) => (calls.push([cmd, args.join(' '), o.cwd]), { ok: true, stdout: USAGE_JSON, stderr: '' });
   const q = agyQuota({ run, env, now: NOW });
-  assert.deepEqual([q.provider, q.status, q.windows.length], ['agy', 'ok', 2]);
-  assert.deepEqual(calls[0].slice(0, 2), ['agy', '-p /usage --output-format json']);
+  assert.deepEqual([q.provider, q.status, q.windows.length], ['agy', 'ok', 3]);
+  // its log goes to our folder, not one new file per run in agy's log folder
+  assert.match(calls[0][1], /^-p \/usage --output-format json --log-file .*agy-probe[\\/]agy\.log$/);
   assert.match(calls[0][2], /agy-probe$/);
   assert.equal(agyQuota({ run, env, now: NOW + 60e3 }).source, 'agy /usage (cached)');
   assert.equal(calls.length, 1);
@@ -215,11 +223,27 @@ test('agy quota: runs `agy -p /usage` in its own empty folder, caches 10 min; pa
   assert.deepEqual([local.status, seen], ['ok', ['agy', 'C:\\Users\\u\\AppData\\Local\\agy\\bin\\agy.exe']]);
   // a failed check keeps the last reading and says why
   const failed = agyQuota({ run: () => ({ ok: false, stdout: '{"status":"ERROR","error":"Eligibility check failed: EOF","num_turns":0}', stderr: '' }), env, now: NOW + 3600e3, refresh: true });
-  assert.deepEqual([failed.status, failed.windows.length, failed.source], ['ok', 2, 'agy /usage (last reading)']);
+  assert.deepEqual([failed.status, failed.windows.length, failed.source], ['ok', 3, 'agy /usage (last reading)']);
   assert.match(failed.message, /now: could not read agy \/usage output: Eligibility check failed: EOF/);
   assert.equal(agyQuota({ run: () => ({ ok: false, stdout: '', stderr: 'boom' }), env: { XDG_CACHE_HOME: tmp() }, now: NOW }).status, 'error');
   // passive: an earlier reading, never a new run
   assert.equal(agyBest({ active: false, env, now: NOW + 86400e3, agy: { run: () => assert.fail('ran agy') } }).status, 'ok');
   assert.equal(agyBest({ active: false, env: { XDG_CACHE_HOME: tmp() }, now: NOW }), null);
   assert.match(renderQuotas({ providers: [q] }), /agy +Gemini week +\S+ +3% used/);
+});
+
+test('agy quota: /usage answered by the model (an agy without the command) is not asked again for a day', () => {
+  const env = { XDG_CACHE_HOME: tmp() };
+  const NOW = Date.parse('2026-11-22T13:00:00Z');
+  agyQuota({ run: () => ({ ok: true, stdout: USAGE_JSON, stderr: '' }), env, now: NOW });
+  let runs = 0;
+  const chat = () => (runs++, { ok: true, stdout: '{"status":"SUCCESS","response":"I cannot see your quota.","num_turns":1}', stderr: '' });
+  const first = agyQuota({ run: chat, env, now: NOW + 3600e3 });
+  assert.deepEqual([first.status, first.source, runs], ['ok', 'agy /usage (last reading)', 1]);
+  assert.match(first.message, /answered \/usage with the model/);
+  assert.equal(agyQuota({ run: chat, env, now: NOW + 7200e3 }).source, 'agy /usage (last reading)');
+  assert.equal(runs, 1);
+  agyQuota({ run: chat, env, now: NOW + 7200e3, refresh: true }); // Refresh asks again
+  assert.equal(runs, 2);
+  assert.equal(agyQuota({ run: () => ({ ok: true, stdout: USAGE_JSON, stderr: '' }), env, now: NOW + 26 * 3600e3 }).source, 'agy /usage');
 });

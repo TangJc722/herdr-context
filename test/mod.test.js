@@ -121,6 +121,15 @@ test('redesign helpers: trend bars, paths, agents, providers, reset times', () =
   assert.equal(logic.providerName('copilot'), 'Copilot');
   assert.equal(logic.providerName('newco'), 'Newco');
 
+  // compact goes by the sidebar's width; the way back uses the remembered width
+  const lay = (px) => ({ id: 'root', children: [{ id: 'panel', size: px ? { px } : undefined }] });
+  assert.equal(logic.isCompact(lay(240)), true);
+  assert.equal(logic.isCompact(lay(368)), false);
+  assert.equal(logic.isCompact(lay(null)), false);
+  assert.deepEqual(logic.compactCommands(lay(420), null), { save: 420, commands: [['layout.resize', { id: 'panel', px: logic.COMPACT_WIDTH }]] });
+  assert.deepEqual(logic.compactCommands(lay(248), 420).commands, [['layout.resize', { id: 'panel', px: 420 }]]);
+  assert.deepEqual(logic.compactCommands(lay(248), 100).commands, [['layout.resize', { id: 'panel', px: logic.WIDE_WIDTH }]], 'never back to a narrow width');
+
   const now = Date.parse('2026-11-21T12:00:00Z');
   assert.equal(logic.resetsIn(new Date(now + 2 * 3600e3 - 10e3).toISOString(), now), 'in 2h 0m', 'never "1h 60m"');
 });
@@ -271,7 +280,7 @@ test('mod main.js: fetches through the bundled CLI and draws panel and chip', as
   fs.renameSync(projects, path.join(path.dirname(projects), 'projects-' + path.basename(projects)));
   const projDir = path.join(path.dirname(projects), 'projects-' + path.basename(projects));
   const cfgDir = tmp();
-  fs.symlinkSync(projDir, path.join(cfgDir, 'projects'));
+  fs.symlinkSync(projDir, path.join(cfgDir, 'projects'), 'junction'); // a junction: Windows needs no admin for it (ignored elsewhere)
   globalThis.__herdr.env.CLAUDE_CONFIG_DIR = cfgDir;
 
   const world = stubWorld(appHome);
@@ -331,7 +340,7 @@ test('mod main.js: fetches through the bundled CLI and draws panel and chip', as
   m.sessions.p2 = { pane: 'p2', agent: 'codex', how: null, others: 0, session: null };
   assert.ok(texts(m.render()).includes('codex: no session log for this folder yet.'));
   globalThis.__herdr.panes = [{ pane: 'p2', terminal: 'tm2', tab: 't1', focused: true, cwd: '/elsewhere', app: 'cursor-agent' }];
-  assert.ok(texts(m.render()).includes('cursor-agent: the context view supports Claude Code and Codex for now.'));
+  assert.ok(texts(m.render()).includes('cursor-agent: the context view supports Claude Code, Codex and Antigravity for now.'));
 
   // a plain shell (no agent) in a parent folder: no borrowed session, the space's agents instead
   globalThis.__herdr.focused = { space: 's1', tab: 't2', pane: 'p3', terminal: 'tm3', cwd: '/' };
@@ -400,6 +409,22 @@ test('mod main.js: fetches through the bundled CLI and draws panel and chip', as
   globalThis.__herdr.runCalls = [];
   closeClick(sb.render())();
   assert.deepEqual(globalThis.__herdr.runCalls, [['layout.hide', { id: 'panel' }]]);
+  // compact: narrows the sidebar (remembering its width) and draws the key numbers only
+  const compactClick = (n) => (n.ids.includes('hc-compact') ? n.clickFn : n.kids.map(compactClick).find(Boolean));
+  const panelNode = findN(globalThis.__herdr.layout, 'panel');
+  panelNode.size = { px: 400 };
+  assert.ok(texts(sb.render()).includes('⇥'), 'compact button');
+  globalThis.__herdr.runCalls = [];
+  compactClick(sb.render())();
+  assert.deepEqual(globalThis.__herdr.runCalls, [['layout.resize', { id: 'panel', px: logic.COMPACT_WIDTH }]]);
+  assert.equal(globalThis.__herdr.shared['herdr-context.panelWidth'], 400);
+  panelNode.size = { px: logic.COMPACT_WIDTH }; // what Herdr does with that resize
+  const small = texts(sb.render());
+  assert.ok(small.includes('⇤') && !small.includes('MAKEUP') && !small.includes('FILES'), `compact view: ${JSON.stringify(small)}`);
+  assert.ok(small.includes('1.3k'), 'compact still shows the context');
+  globalThis.__herdr.runCalls = [];
+  compactClick(sb.render())();
+  assert.deepEqual(globalThis.__herdr.runCalls, [['layout.resize', { id: 'panel', px: 400 }]], 'back to the width it had');
   globalThis.__herdr.layout = { id: 'root', type: 'row', children: [] };
 
   // language: the 中/EN button flips shared state; panel and chip follow

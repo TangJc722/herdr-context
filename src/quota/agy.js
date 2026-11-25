@@ -12,8 +12,15 @@ import path from 'node:path';
 import { quota, runCommand, stripAnsi, quotaCacheDir, toIso, readCache, writeCache } from './common.js';
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
-const WINDOW_MINUTES = { weekly: 10080, daily: 1440, monthly: 43200 };
-const WINDOW_WORD = { weekly: 'week', daily: 'day', monthly: 'month' };
+const BLOCK_MS = 24 * 3600 * 1000;
+const WINDOW_MINUTES = { weekly: 10080, daily: 1440, monthly: 43200, '5h': 300 };
+const WINDOW_WORD = { weekly: 'week', daily: 'day', monthly: 'month', '5h': '5h' };
+
+/** A reset time, or null for agy's "not started" (1970-01-01: the window has not been used). */
+function resetTime(v) {
+  const iso = toIso(v);
+  return iso && Date.parse(iso) > 86400000 ? iso : null;
+}
 
 /** "Gemini Models" → "Gemini", "Claude and GPT models" → "Claude/GPT". */
 function groupLabel(name) {
@@ -29,7 +36,7 @@ function windowFrom(group, b) {
     id: b.id || `${groupLabel(group)}-${b.window}`,
     label: `${groupLabel(group)} ${word}`.trim(),
     usedPercent: Math.round((1 - remaining) * 10000) / 100,
-    resetsAt: toIso(b.reset_time),
+    resetsAt: resetTime(b.reset_time),
     windowMinutes: minutes,
   };
 }
@@ -54,13 +61,13 @@ export function parseAgyUsage(raw) {
     const cols = line.split('\t').map((c) => c.trim());
     const pct = cols[2]?.match(/^([\d.]+)%$/);
     if (cols.length < 3 || !pct) continue;
-    const weekly = /week/i.test(cols[1]);
+    const kind = /week/i.test(cols[1]) ? 'weekly' : /five hour|5 ?h/i.test(cols[1]) ? '5h' : null;
     windows.push({
-      id: `${groupLabel(cols[0])}-${weekly ? 'weekly' : 'window'}`.toLowerCase(),
-      label: `${groupLabel(cols[0])}${weekly ? ' week' : ''}`,
+      id: `${groupLabel(cols[0])}-${kind ?? 'window'}`.toLowerCase(),
+      label: `${groupLabel(cols[0])}${kind ? ` ${WINDOW_WORD[kind]}` : ''}`,
       usedPercent: Math.round((100 - Number(pct[1])) * 100) / 100,
-      resetsAt: toIso(cols[3]),
-      windowMinutes: weekly ? 10080 : null,
+      resetsAt: resetTime(cols[3]),
+      windowMinutes: kind ? WINDOW_MINUTES[kind] : null,
     });
   }
   return windows.length ? { windows } : null;
@@ -86,21 +93,31 @@ export function agyQuota({ run = runCommand, env = process.env, now = Date.now()
     const c = readCache('agy', CACHE_TTL_MS, { env, now });
     if (c) return { ...c, source: 'agy /usage (cached)' };
   }
-  const cwd = agyProbeDir(env);
-  try {
-    fs.mkdirSync(cwd, { recursive: true });
-  } catch {}
-  const args = ['-p', '/usage', '--output-format', 'json'];
-  let r = run('agy', args, { timeoutMs, env, cwd });
-  const installed = r.notFound ? agyInstalled({ env, platform, exists }) : null;
-  if (installed) r = run(installed, args, { timeoutMs, env, cwd });
-  if (r.notFound) return quota('agy', 'agy /usage', { status: 'not_found', message: 'agy (Antigravity CLI) is not installed' });
   // a failed check (network, sign-in) keeps the last reading, with the reason
   const lastOr = (message) => {
     const c = readCache('agy', Infinity, { env, now });
     return c ? { ...c, source: 'agy /usage (last reading)', message: `now: ${message}` } : quota('agy', 'agy /usage', { status: 'error', message });
   };
+  // /usage once went to the model instead (an agy without the command): don't spend quota again soon
+  const blocked = readCache('agy-blocked', BLOCK_MS, { env, now });
+  if (blocked && !refresh) return lastOr(blocked.message);
+  const cwd = agyProbeDir(env);
+  try {
+    fs.mkdirSync(cwd, { recursive: true });
+  } catch {}
+  // its own log file: each run would otherwise add one to agy's log folder (144 a day)
+  const args = ['-p', '/usage', '--output-format', 'json', '--log-file', path.join(cwd, 'agy.log')];
+  let r = run('agy', args, { timeoutMs, env, cwd });
+  const installed = r.notFound ? agyInstalled({ env, platform, exists }) : null;
+  if (installed) r = run(installed, args, { timeoutMs, env, cwd });
+  if (r.notFound) return quota('agy', 'agy /usage', { status: 'not_found', message: 'agy (Antigravity CLI) is not installed' });
   if (r.timedOut) return lastOr('agy /usage timed out');
+  const turns = Number(`${r.stdout}`.match(/"num_turns":\s*(\d+)/)?.[1] ?? 0);
+  if (turns > 0) {
+    const message = 'agy answered /usage with the model, not the command: not asking again for a day (Refresh retries)';
+    writeCache('agy-blocked', { message }, { env, now });
+    return lastOr(message);
+  }
   const parsed = parseAgyUsage(`${r.stdout}\n${r.stderr}`);
   if (!parsed || !parsed.windows.length) {
     const why = (r.stdout + r.stderr).match(/"error":"((?:[^"\\]|\\.)*)"/)?.[1] ?? r.stderr.split('\n')[0];
