@@ -246,7 +246,10 @@ otherwise). Should an agy ever send `/usage` to the model instead (it then
 reports turns), the check stops for a day rather than spend quota every 10 min;
 Refresh tries again. The plan: none of agy's print-mode commands (`/usage`,
 `/quota`, `/credits`) names it; agy's status line does (`plan_tier`, e.g.
-"Antigravity Starter Quota", shown as "Starter"). To get it, add agy's collector
+"Antigravity Starter Quota"). It is shown in Google's plan names: Starter is the
+quota Free and Google AI Plus share ([plans](https://antigravity.google/docs/plans.md):
+weekly only, no AI credits), and agy cannot tell the two apart, so "Free/Plus";
+other tiers are shortened ("Google AI Pro" → "AI Pro"). To get it, add agy's collector
 to `~/.gemini/antigravity-cli/settings.json` (`install-mod` prints the line):
 
 ```json

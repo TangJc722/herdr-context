@@ -205,7 +205,9 @@ Antigravity：`/usage` 是 agy 自己的命令。在打印模式下它直接在�
 `%LOCALAPPDATA%\agy\bin` 找。查询时 agy 的日志写到探测目录，而不是 agy 自己的日志目录（否则每次都多一个文件）。
 如果某个版本的 agy 把 `/usage` 当成普通提问发给了模型（输出里会有 turns），一天内不再查询，免得每 10 分钟消耗一次额度；
 点刷新会重试。套餐：agy 的打印模式命令（`/usage`、`/quota`、`/credits`）都没有给出套餐，
-agy 的状态栏数据里有（`plan_tier`，比如 "Antigravity Starter Quota"，显示为 "Starter"）。
+agy 的状态栏数据里有（`plan_tier`，比如 "Antigravity Starter Quota"）。卡片上用 Google 的套餐名显示：
+Starter 是 Free 和 Google AI Plus 共用的那一档额度（[plans](https://antigravity.google/docs/plans.md)：只有每周额度，不能买 AI 点数），
+agy 分不出这两者，所以显示为 "Free/Plus"；其他档位只做缩写（"Google AI Pro" → "AI Pro"）。
 要显示它，在 `~/.gemini/antigravity-cli/settings.json` 里加上 agy 的采集器（`install-mod` 会打印这一行）：
 
 ```json

@@ -38,8 +38,13 @@ export function readAgyStatusline({ env = process.env } = {}) {
   }
 }
 
-/** "Antigravity Starter Quota" → "Starter", "Google AI Pro" → "AI Pro": short enough for a badge. */
+/**
+ * A badge in Google's plan names. agy's "Antigravity Starter Quota" is the quota Free and
+ * Google AI Plus share (weekly only, no credits; antigravity.google/docs/plans): agy cannot
+ * tell the two apart, so "Free/Plus". Anything else is shortened: "Google AI Pro" → "AI Pro".
+ */
 export function shortPlan(tier) {
   const s = String(tier ?? '').trim().replace(/^(antigravity|google)\s+/i, '').replace(/\s+(quota|tier|plan)$/i, '').trim();
+  if (/^starter$/i.test(s)) return 'Free/Plus';
   return s || null;
 }

@@ -272,13 +272,14 @@ test('agy statusLine: keeps the plan tier (never the e-mail); the quota card sho
   const { plan_tier, ...early } = SL_PAYLOAD;
   writeAgyStatusline(early, { env, now: new Date(NOW) });
   assert.equal(readAgyStatusline({ env }).planTier, 'Antigravity Starter Quota');
-  assert.equal(shortPlan('Antigravity Starter Quota'), 'Starter');
+  assert.equal(shortPlan('Antigravity Starter Quota'), 'Free/Plus');
+  assert.equal(shortPlan('Starter'), 'Free/Plus');
   assert.equal(shortPlan('Google AI Pro'), 'AI Pro');
   assert.equal(shortPlan(''), null);
   const q = agyQuota({ run: () => ({ ok: true, stdout: USAGE_JSON, stderr: '' }), env, now: NOW });
-  assert.equal(q.plan, 'Starter');
-  assert.match(renderQuotas({ providers: [q] }), /\[Starter\]/);
-  assert.equal(agyBest({ active: false, env, now: NOW }).plan, 'Starter');
+  assert.equal(q.plan, 'Free/Plus');
+  assert.match(renderQuotas({ providers: [q] }), /\[Free\/Plus\]/);
+  assert.equal(agyBest({ active: false, env, now: NOW }).plan, 'Free/Plus');
   // no statusLine reading: no plan, nothing else changes
   const bare = { XDG_CACHE_HOME: tmp() };
   assert.equal(agyQuota({ run: () => ({ ok: true, stdout: USAGE_JSON, stderr: '' }), env: bare, now: NOW }).plan, null);
