@@ -16,9 +16,11 @@ export const agyStatuslineFile = (env = process.env) => path.join(quotaCacheDir(
 /** Saves what we use of a payload. Returns the written path, or null if unusable. */
 export function writeAgyStatusline(payload, { env = process.env, now = new Date() } = {}) {
   if (!payload || typeof payload !== 'object' || payload.product && payload.product !== 'antigravity') return null;
-  const planTier = typeof payload.plan_tier === 'string' && payload.plan_tier.trim() ? payload.plan_tier.trim() : null;
+  const sent = typeof payload.plan_tier === 'string' && payload.plan_tier.trim() ? payload.plan_tier.trim() : null;
   const quota = payload.quota && typeof payload.quota === 'object' ? payload.quota : null;
-  if (!planTier && !quota) return null;
+  if (!sent && !quota) return null;
+  // agy's first payloads after start carry no plan_tier yet (it follows a few seconds later): keep the last one
+  const planTier = sent ?? readAgyStatusline({ env })?.planTier ?? null;
   const file = agyStatuslineFile(env);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;

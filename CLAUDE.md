@@ -67,7 +67,8 @@ Antigravity CLI `agy` (`~/.gemini/antigravity-cli`; Herdr calls the pane's app "
   (`/usage`, `/quota`, `/credits`) nor in agy's keyring entry (Credential Manager
   `gemini:antigravity`: token, auth_method, e-mail only; don't read it anyway). It is in the
   statusLine payload (`plan_tier`, also `quota` buckets, `version`, and `email`: never keep
-  that), which agy sends to a custom statusLine command in interactive sessions only. agy runs
+  that), which agy sends to a custom statusLine command in interactive sessions only; the first
+  payloads after start lack `plan_tier` (it follows ~3 s later): keep the last one. agy runs
   that command via cmd.exe with `"` escaped to `\"`: quoted paths break, use `node` + a path
   without spaces. `stack_with_default: true` keeps agy's own line when ours prints nothing.
   Try a statusLine with `--settings <file>` (session only, never saved; put the folder in its

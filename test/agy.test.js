@@ -268,6 +268,10 @@ test('agy statusLine: keeps the plan tier (never the e-mail); the quota card sho
   assert.equal(file, agyStatuslineFile(env));
   assert.ok(!fs.readFileSync(file, 'utf8').includes('example.com'), 'no e-mail on disk');
   assert.deepEqual(readAgyStatusline({ env }), { receivedAt: '2026-11-26T01:00:00.000Z', planTier: 'Antigravity Starter Quota', version: '1.5.17', quota: SL_PAYLOAD.quota });
+  // agy's first payloads after start have no plan_tier yet: the last one stays
+  const { plan_tier, ...early } = SL_PAYLOAD;
+  writeAgyStatusline(early, { env, now: new Date(NOW) });
+  assert.equal(readAgyStatusline({ env }).planTier, 'Antigravity Starter Quota');
   assert.equal(shortPlan('Antigravity Starter Quota'), 'Starter');
   assert.equal(shortPlan('Google AI Pro'), 'AI Pro');
   assert.equal(shortPlan(''), null);
